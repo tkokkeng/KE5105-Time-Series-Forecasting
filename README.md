@@ -6,4 +6,4 @@ For this purpose, I will be exploring the use of **recurrent neural networks**.
 
 I hope you will find the material in this GitHub pages useful. 
 
-Thank you for your time.
+Thank you for your reading time.
