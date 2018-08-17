@@ -1,1 +1,3 @@
 theme: jekyll-theme-tactile
+title: Time Series Forecasting Project
+description: This project aims to forecast timeseries for resource consumption in office buildings. 
