@@ -137,6 +137,7 @@ def is_day_first(file_name, time_series_data):
 # It also performs date/time and string to numeric conversions.
 def combine_csv_files_by_bldg(name, input_data_path=RAW_DATA_PATH, output_data_path=COMBINED_DATA_PATH):
 
+    MISSING_DATA_RATIO = .95
     bldg_data_list = load_data_by_bldg(name, input_data_path)
 
     # Perform pre-processing for all the dataframes in the list.
@@ -147,7 +148,7 @@ def combine_csv_files_by_bldg(name, input_data_path=RAW_DATA_PATH, output_data_p
             day_first, unclear = is_day_first(i[0], i[3])
             if unclear:
                 # Log error message
-                write_msg_log(i[0] + 'date format unclear')
+                write_msg_log(i[0] + 'date format unclear.', log=output_data_path+'/logfile.txt')
 
             if day_first:
                 i[3].loc[:, 'Pt_timeStamp'] = pd.to_datetime(i[3].loc[:, 'Pt_timeStamp'], dayfirst=True)
@@ -162,6 +163,22 @@ def combine_csv_files_by_bldg(name, input_data_path=RAW_DATA_PATH, output_data_p
             # Add any other pre-processing here.
             ####################################
 
+        # This to be done after reading from file before each analysis.
+        #
+        # # Reindex the dataframe using the year/month/day/time, add NaN values for any period with no data.
+        # # The NaNs will prevent two data values from being connected in a plot.
+        # i[3].set_index('Pt_timeStamp', inplace=True)
+        # #all_dates = pd.date_range('5/2015', '8/2018', freq='30min')
+        # # i[2] = month; i[1] = year; get a string in the format m/y
+        # mmyyyy = str(i[2]) + '/' + str(i[1])
+        # if not i[2]%12:
+        #     mmplus1yyyy = str(i[2] % 12 + 1) + '/' + str(i[1]+1)
+        # else:
+        #     mmplus1yyyy = str(i[2] % 12 + 1) + '/' + str(i[1])
+        # all_dates = pd.date_range(mmyyyy, mmplus1yyyy, freq='30min')
+        # i[3] = i[3].reindex(all_dates)
+        # i[3].sort_index(inplace=True)
+
         # Remove whitespaces and dashes from the column names, even for empty data frames.
         new_col_name_list = []
         for j in i[3].columns:
@@ -175,28 +192,38 @@ def combine_csv_files_by_bldg(name, input_data_path=RAW_DATA_PATH, output_data_p
 
     if df_list: # not empty list
 
+        # Concatenate the dataframes in the list.
         bldg_data_df = pd.concat(df_list)
 
-        # Reindex the dataframe using the year/month/day/time, add missing values for any period with no files.
-        bldg_data_df.set_index('Pt_timeStamp', inplace=True)
-        #all_dates = pd.date_range('5/2015', '8/2018', freq='30min')
-        all_dates = pd.date_range(bldg_data_df.index.min(), bldg_data_df.index.max(), freq='30min')
-        bldg_data_df = bldg_data_df.reindex(all_dates)
-        bldg_data_df.sort_index(inplace=True)
+        # After concatenation, pandas sorts the columns by lexico order. Change Pt_Timestamp to first position.
+        pt_ts_col_idx = bldg_data_df.columns.get_loc('Pt_timeStamp')
+        cols = bldg_data_df.columns.tolist()
+        cols = cols[pt_ts_col_idx:pt_ts_col_idx+1] + cols[:pt_ts_col_idx] + cols[pt_ts_col_idx+1:]
+        bldg_data_df = bldg_data_df[cols]
 
-        # Copy index (i.e. Pt_timeStamp) back to a column
-        bldg_data_df.insert(0, 'Pt_timeStamp', bldg_data_df.index)
-        bldg_data_df.reset_index(drop=True, inplace=True)
+        #bldg_data_df.sort_index(inplace=True)
+
+        # Log an error message if the data has many NaNs.
+        # x = ratio_NaN(bldg_data_df)
+        # if ratio_NaN(bldg_data_df) > MISSING_DATA_RATIO:
+        #     write_msg_log(name + ' has >' + str(MISSING_DATA_RATIO*100) + '% missing data.', log=output_data_path+'/logfile.txt')
+
+        # Copy index (i.e. Pt_timeStamp) back to a column *** removed together with re-index ***
+        # bldg_data_df.insert(0, 'Pt_timeStamp', bldg_data_df.index)
+        # bldg_data_df.reset_index(drop=True, inplace=True)
 
         # Save the dataframe as csv file. Do not write row names (i.e. index 0,1,2,3,4,...)
         bldg_data_df.to_csv(output_data_path + '/' + name + '.csv', index=False)
+    else:
+        # Log error message.
+        write_msg_log(name + ' has no data.', log=output_data_path+'/logfile.txt')
 
     return None
 
 # This function writes an error message to the message log.
 def write_msg_log(msg, log=MSG_LOG_FILE):
     logfile = open(log, 'a')
-    logfile.write(datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S") + ' ' + msg)
+    logfile.write(datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S") + ' ' + msg + '\n')
     logfile.close()
     return None
 
@@ -205,22 +232,67 @@ def plot_cumulative_PWM_upto10_bldgs(bldg_list, data_path=COMBINED_DATA_PATH):
 
     nrows = math.ceil(len(bldg_list)/2)
     height = nrows * 4
+    no_more_plots = False
 
     fig, ax = plt.subplots(nrows=nrows, ncols=2, figsize=(20, height))
     list_idx = 0
     for row in ax:
         for col in row:
-            # Read the csv file which has all the cumulative time series data for a building.
-            a_bldg_df = pd.read_csv(data_path + '/' + bldg_list[list_idx] + '.csv', index_col=0, parse_dates=True)
-            # Get the PWM related column names
-            a_bldg__PWM_columns = []
-            for i in a_bldg_df.columns:
-                if 'PWM' in i:
-                    a_bldg__PWM_columns.append(i)
-            # Plot the time series data.
-            col.plot(a_bldg_df.loc[:, a_bldg__PWM_columns])
-            col.set_title(bldg_list[list_idx]+' PWM over 2015-2018')
-            col.legend(a_bldg_df.loc[:, a_bldg__PWM_columns])
-            list_idx += 1
+            if not no_more_plots:
+                # Read the csv file which has all the cumulative time series data for a building.
+                a_bldg_df = pd.read_csv(data_path + '/' + bldg_list[list_idx] + '.csv', index_col=0, parse_dates=True)
+                # Get the PWM related column names
+                a_bldg__PWM_columns = []
+                for i in a_bldg_df.columns:
+                    if 'PWM' in i:
+                        a_bldg__PWM_columns.append(i)
+                # Plot the time series data.
+                col.plot(a_bldg_df.loc[:, a_bldg__PWM_columns])
+                col.set_title(bldg_list[list_idx]+' PWM over 2015-2018')
+                if len(a_bldg__PWM_columns)<10:
+                    col.legend(a_bldg_df.loc[:, a_bldg__PWM_columns])
+                if (list_idx<len(bldg_list)-1):
+                    list_idx += 1
+                else:
+                    no_more_plots = True
+            else:
+                col.axis('off')
     plt.show()
     return None
+
+# This function re-indexes a time series data frame by filling in missing 30 min periods for a month.
+def reindex_ts_df_mth(ts_df, month, year):
+
+    # Copy the data frame.
+    df = ts_df.copy()
+
+    # Reindex the dataframe using the year/month/day/time, add NaN values for any period with no data.
+    df.set_index('Pt_timeStamp', inplace=True)
+    mmyyyy = str(month) + '/' + str(year)
+    if not month%12:
+        mmplus1yyyy = str(1) + '/' + str(year+1)
+    else:
+        mmplus1yyyy = str(month + 1) + '/' + str(year)
+    all_dates = pd.date_range(mmyyyy, mmplus1yyyy, freq='30min')
+    df = df.reindex(all_dates)
+    df.sort_index(inplace=True)
+
+    return df
+
+
+# This function re-indexes a time series data frame by filling in missing 30 min periods for a date range.
+def reindex_ts_df(ts_df, mmyyyy_start, mmyyyy_end):
+    # Copy the data frame.
+    df = ts_df.copy()
+
+    # Reindex the dataframe using the year/month/day/time, add NaN values for any period with no data.
+    df.set_index('Pt_timeStamp', inplace=True)
+    all_dates = pd.date_range(mmyyyy_start, mmyyyy_end, freq='30min')
+    df = df.reindex(all_dates)
+    df.sort_index(inplace=True)
+
+    return df
+
+# This function calculates the proportion of NaNs in a data frame.
+def ratio_NaN(df):
+    return df.isnull().sum().sum()/(len(df.columns)*len(df))
