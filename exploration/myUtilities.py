@@ -2,10 +2,14 @@
 import os
 import pandas as pd
 import re
+import datetime
+import math
+import matplotlib.pyplot as plt
 
 RAW_DATA_PATH = "source/105 building data"
 COMBINED_DATA_PATH = "source/combined_bldg_data"
 PROCESSED_DATA_PATH = "source/processed_bldg_data"
+MSG_LOG_FILE = "source/log/logfile.txt"
 
 MONTH_TO_NUM = {
     'Jan': 1,
@@ -98,20 +102,36 @@ def process_PWM_data_by_bldg(name, input_data_path=RAW_DATA_PATH, output_data_pa
 def is_day_first(file_name, time_series_data):
 
     result = False
+    ambiguous = True
     mmmyyyy = file_name.split('.')[0].split('_')[1]
     mmm = re.search('[A-Z][a-z]{2}', mmmyyyy)[0]
 
     # Extract the month from the filename.
     month = MONTH_TO_NUM[mmm]
     if not time_series_data.empty:
-        if month != 1:
-            # Check the 1st datetime value.
-            result = int(time_series_data.iloc[0, 0].split('/')[1]) == month
-        else:
-            # For Jan, need to check datetime value for 2nd day i.e. 48 x 2 = 96.
-            result = int(time_series_data.iloc[96, 0].split('/')[1]) == month
 
-    return result
+        for index, row in time_series_data.iterrows():
+            # Get the first 2 numbers of the date field.
+            first_num = row[0].split(' ')[0].split('/')[0]
+            second_num = row[0].split(' ')[0].split('/')[1]
+            if int(first_num) != month:
+                # Day first
+                result = True
+                ambiguous = False
+                break
+            elif int(second_num) != month:
+                # Month first
+                ambiguous = False
+                break
+
+        # if month != 1:
+        #     # Check the 1st datetime value.
+        #     result = int(time_series_data.iloc[0, 0].split('/')[1]) == month
+        # else:
+        #     # For Jan, need to check datetime value for 2nd day i.e. 48 x 2 = 96.
+        #     result = int(time_series_data.iloc[96, 0].split('/')[1]) == month
+
+    return result, ambiguous
 
 # This function combines all the raw time series PWM data in separate csv files into one csv file for a building.
 # It also performs date/time and string to numeric conversions.
@@ -119,37 +139,88 @@ def combine_csv_files_by_bldg(name, input_data_path=RAW_DATA_PATH, output_data_p
 
     bldg_data_list = load_data_by_bldg(name, input_data_path)
 
-    # Convert the date/time for all the dataframes in the list.
+    # Perform pre-processing for all the dataframes in the list.
     for i in bldg_data_list:
         if not i[3].empty:
-            if is_day_first(i[0], i[3]):
+
+            # Convert the date/time.
+            day_first, unclear = is_day_first(i[0], i[3])
+            if unclear:
+                # Log error message
+                write_msg_log(i[0] + 'date format unclear')
+
+            if day_first:
                 i[3].loc[:, 'Pt_timeStamp'] = pd.to_datetime(i[3].loc[:, 'Pt_timeStamp'], dayfirst=True)
             else:
                 i[3].loc[:, 'Pt_timeStamp'] = pd.to_datetime(i[3].loc[:, 'Pt_timeStamp'])
 
-    # Convert the strings to floats for all the dataframes in the list.
-    for i in bldg_data_list:
-        if not i[3].empty:
+            # Convert the strings to floats for all the dataframes in the list.
             for j in i[3].iloc[:, 1:].columns:
                 i[3][j] = i[3][j].astype('str').apply(lambda x: x.replace(',', '')).astype('float')
+
+            ####################################
+            # Add any other pre-processing here.
+            ####################################
+
+        # Remove whitespaces and dashes from the column names, even for empty data frames.
+        new_col_name_list = []
+        for j in i[3].columns:
+            new_col_name_list.append(re.sub('[ -]', '', j))
+        i[3].columns = new_col_name_list
 
     # Concatenate the list of dataframes into 1 single dataframe.
     df_list = []
     for i in bldg_data_list:
         df_list.append(i[3])
-    bldg_data_df = pd.concat(df_list)
 
-    # Reindex the dataframe using the year/month/day/time, add missing values for any period with no files.
-    bldg_data_df.set_index('Pt_timeStamp', inplace=True)
-    all_dates = pd.date_range('5/2015', '8/2018', freq='30min')
-    bldg_data_df = bldg_data_df.reindex(all_dates)
-    bldg_data_df.sort_index(inplace=True)
+    if df_list: # not empty list
 
-    # Copy index (i.e. Pt_timeStamp) back to a column
-    bldg_data_df.insert(0, 'Pt_timeStamp', bldg_data_df.index)
-    bldg_data_df.reset_index(drop=True, inplace=True)
+        bldg_data_df = pd.concat(df_list)
 
-    # Save the dataframe as csv file. Do not write row names (i.e. index 0,1,2,3,4,...)
-    bldg_data_df.to_csv(output_data_path + '/' + name + '.csv', index=False)
+        # Reindex the dataframe using the year/month/day/time, add missing values for any period with no files.
+        bldg_data_df.set_index('Pt_timeStamp', inplace=True)
+        #all_dates = pd.date_range('5/2015', '8/2018', freq='30min')
+        all_dates = pd.date_range(bldg_data_df.index.min(), bldg_data_df.index.max(), freq='30min')
+        bldg_data_df = bldg_data_df.reindex(all_dates)
+        bldg_data_df.sort_index(inplace=True)
 
+        # Copy index (i.e. Pt_timeStamp) back to a column
+        bldg_data_df.insert(0, 'Pt_timeStamp', bldg_data_df.index)
+        bldg_data_df.reset_index(drop=True, inplace=True)
+
+        # Save the dataframe as csv file. Do not write row names (i.e. index 0,1,2,3,4,...)
+        bldg_data_df.to_csv(output_data_path + '/' + name + '.csv', index=False)
+
+    return None
+
+# This function writes an error message to the message log.
+def write_msg_log(msg, log=MSG_LOG_FILE):
+    logfile = open(log, 'a')
+    logfile.write(datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S") + ' ' + msg)
+    logfile.close()
+    return None
+
+# This function plots the cumulative time series data for up to ten buildings
+def plot_cumulative_PWM_upto10_bldgs(bldg_list, data_path=COMBINED_DATA_PATH):
+
+    nrows = math.ceil(len(bldg_list)/2)
+    height = nrows * 4
+
+    fig, ax = plt.subplots(nrows=nrows, ncols=2, figsize=(20, height))
+    list_idx = 0
+    for row in ax:
+        for col in row:
+            # Read the csv file which has all the cumulative time series data for a building.
+            a_bldg_df = pd.read_csv(data_path + '/' + bldg_list[list_idx] + '.csv', index_col=0, parse_dates=True)
+            # Get the PWM related column names
+            a_bldg__PWM_columns = []
+            for i in a_bldg_df.columns:
+                if 'PWM' in i:
+                    a_bldg__PWM_columns.append(i)
+            # Plot the time series data.
+            col.plot(a_bldg_df.loc[:, a_bldg__PWM_columns])
+            col.set_title(bldg_list[list_idx]+' PWM over 2015-2018')
+            col.legend(a_bldg_df.loc[:, a_bldg__PWM_columns])
+            list_idx += 1
+    plt.show()
     return None
