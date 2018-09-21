@@ -17,6 +17,7 @@ _PROCESSED_DATA_PATH_ = os.path.join('source', 'processed_bldg_data')
 _MSG_LOG_FILE_ = os.path.join('source', 'log', 'logfile.txt')
 
 _DATA_TYPE_TO_PATH_ = {
+    'raw': _RAW_DATA_PATH_,
     'combined': _COMBINED_DATA_PATH_,
     'processed': _PROCESSED_DATA_PATH_
 }
@@ -70,15 +71,24 @@ def get_num_files_by_bldg_mth(data_path=_RAW_DATA_PATH_):
 
 # This function loads the time series data for a list of building names. type is defined in _DATA_TYPE_TO_PATH_.
 # It returns a list of [[name, data frame], ...]
+# If type='raw', building list must have only 1 building.
 def load_data_by_bldg(bldg_name_list, type, data_path=None):
 
     bldg_df_list = []
-    for i in bldg_name_list:
+
+    if type=='raw':
         if data_path==None:
-            df = pd.read_csv(os.path.join(_DATA_TYPE_TO_PATH_[type], i + '.csv'), index_col=0, parse_dates=True)
+            bldg_df_list = _load_data_by_bldg_(bldg_name_list[0])
         else:
-            df = pd.read_csv(os.path.join(data_path, i + '.csv'), index_col=0, parse_dates=True)
-        bldg_df_list.append([i, df])
+            bldg_df_list = _load_data_by_bldg_(bldg_name_list[0], data_path=data_path)
+    else:
+        for i in bldg_name_list:
+            if data_path==None:
+                df = pd.read_csv(os.path.join(_DATA_TYPE_TO_PATH_[type], i + '.csv'), index_col=0, parse_dates=True)
+            else:
+                df = pd.read_csv(os.path.join(data_path, i + '.csv'), index_col=0, parse_dates=True)
+            df.sort_index(inplace=True)
+            bldg_df_list.append([i, df])
 
     return bldg_df_list
 
@@ -190,7 +200,7 @@ def combine_csv_files_by_bldg(name, input_data_path=_RAW_DATA_PATH_, output_data
         bldg_data_df = bldg_data_df[cols]
 
         # Save the dataframe as csv file. Do not write row names (i.e. index 0,1,2,3,4,...)
-        bldg_data_df.to_csv(output_data_path + '/' + name + '.csv', index=False)
+        bldg_data_df.to_csv(os.path.join(output_data_path, name + '.csv'), index=False)
     else:
         # Log error message.
         _write_msg_log_(name + ' has no data.', log=os.path.join(output_data_path, 'logfile.txt'))
@@ -261,21 +271,27 @@ def plot_pwm_upto10_bldgs(bldg_df_list):
 
 
 # This function re-indexes a time series data frame by filling in missing 30 min periods for a date range.
-# e.g. mmyyyy_start='5/2015'
-def reindex_ts_df(ts_df, mmyyyy_start, mmyyyy_end):
+# e.g. start='5/2015' or datetime
+def reindex_ts_df(ts_df, start, end):
     # Copy the data frame.
     df = ts_df.copy()
 
     # Reindex the dataframe using the year/month/day/time, add NaN values for any period with no data.
-    all_dates = pd.date_range(mmyyyy_start, mmyyyy_end, freq='30min')
+    all_dates = pd.date_range(start, end, freq='30min')
     df = df.reindex(all_dates)
     df.sort_index(inplace=True)
 
     return df
 
+
+# This function calculates the 30 min average PWM values from the cumulative values.
+def compute_30min_pwm(name, input_data_path=_COMBINED_DATA_PATH_, output_data_path=_PROCESSED_DATA_PATH_):
+    return None
+
+
 # This function calculates the proportion of NaNs in a data frame.
-def ratio_nan(df):
-    return df.isnull().sum().sum()/(len(df.columns)*len(df))
+# def ratio_nan(df):
+#     return df.isnull().sum().sum()/(len(df.columns)*len(df))
 
 
 # This function reads the log file.
