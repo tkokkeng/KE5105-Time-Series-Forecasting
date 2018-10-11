@@ -1,0 +1,166 @@
+---
+title: "ETL5 R Notebook"
+output:
+  github_document
+---
+
+# Load libraries
+```{r}
+library(ggplot2)
+library(xts)
+library(imputeTS)
+```
+
+# Load data
+```{r}
+sde3_agg_df <- read.csv("/home/tkokkeng/Documents/KE5105/ETL/source/test_data/SDE-3.agg.csv", header = TRUE, stringsAsFactors = FALSE)
+head(sde3_agg_df)
+```
+
+## Convert the Pt_timeStamp strings to POSIX time
+```{r}
+sde3_agg_df$Pt_timeStamp <- strptime(sde3_agg_df$Pt_timeStamp, format = "%Y-%m-%d %H:%M:%S", tz="GMT")
+head(sde3_agg_df)
+```
+
+
+```{r}
+str(sde3_agg_df$Pt_timeStamp[2])
+```
+
+## Convert the time series data for plotting
+```{r}
+ts <- xts(sde3_agg_df$PWM_30min_avg, as.Date(sde3_agg_df$Pt_timeStamp))
+
+#start_time = sde3_agg_df[1, "Pt_timeStamp"]
+#end_time = unclass(as.POSIXct(tail(sde3_agg_df, 1)$Pt_timeStamp, origin = as.POSIXct(tz="GMT")))
+#ts <- ts(data=sde3_agg_df$PWM_30min_avg, start=c(sde3_agg_df[1, "Pt_timeStamp"], 1), end=c(tail(sde3_agg_df, 1)$Pt_timeStamp, 48), frequency=48)
+#ts <- ts(data=sde3_agg_df$PWM_30min_avg, start=c(start_time, 1), end=c(end_time, 48), frequency=48)
+
+head(ts)
+```
+
+## Plot the time series data
+```{r, fig.height = 5, fig.width = 10}
+autoplot(ts, ylab = "Aggregated PWM", xlab = "Time") + ggtitle("SDE-3 Aggregated PWM")
+```
+
+## Get the time series data before the data outage
+```{r}
+sde3_less_df = sde3_agg_df[sde3_agg_df$Pt_timeStamp < as.POSIXct("2017-03-31 23:30:00"),]
+head(sde3_less_df)
+```
+
+
+```{r}
+ts_less <- xts(sde3_less_df$PWM_30min_avg, as.Date(sde3_less_df$Pt_timeStamp))
+head(ts)
+```
+
+## Plot the time series data
+```{r, fig.height = 3, fig.width = 10}
+autoplot(ts_less, ylab = "Aggregated PWM", xlab = "Time") +
+  ggtitle("SDE-3 Aggregated PWM")
+```
+
+## Plot the missing data
+```{r, fig.height = 4, fig.width = 10}
+plotNA.distribution(sde3_less_df$PWM_30min_avg, cex=.1)
+```
+
+## Plot the distribution of the missing data
+```{r}
+plotNA.distributionBar(sde3_less_df$PWM_30min_avg, breaks = 20)
+```
+
+## Plot the distribution of the missing data by gap size
+```{r}
+plotNA.gapsize(sde3_less_df$PWM_30min_avg)
+```
+
+# Impute the missing values using structural model and Kalman smoothing
+```{r}
+rownames(sde3_less_df) <- sde3_less_df$Pt_timeStamp
+head(sde3_less_df["PWM_30min_avg"])
+```
+
+
+```{r}
+imp <- na.kalman(sde3_less_df["PWM_30min_avg"])
+#imp <- na.kalman(ts_less)
+```
+
+## Plot the imputed data
+```{r, fig.height = 5, fig.width = 10}
+plotNA.imputations(x.withNA = sde3_less_df$PWM_30min_avg, x.withImputations = imp$PWM_30min_avg, cex=.1)
+```
+
+Imputation missing data in the larger gaps appear wildly inaccurate.  
+
+## Plot the imputed data for the 1st 5000 observations
+```{r, fig.height = 5, fig.width = 10}
+plotNA.imputations(x.withNA = sde3_less_df[1500:5000, "PWM_30min_avg"], x.withImputations = imp[1500:5000, "PWM_30min_avg"], cex=.1)
+```
+
+## Plot the imputed data for the 2000-2500 observations
+```{r, fig.height = 5, fig.width = 10}
+plotNA.imputations(x.withNA = sde3_less_df[1950:2550, "PWM_30min_avg"], x.withImputations = imp[1950:2550, "PWM_30min_avg"])
+```
+
+Imputation of missing data in the smaller gaps appear to be quite accurate.
+
+
+## Plot the imputed data for the 3500-4000 observations
+```{r, fig.height = 5, fig.width = 10}
+plotNA.imputations(x.withNA = sde3_less_df[3500:4000, "PWM_30min_avg"], x.withImputations = imp[3500:4000, "PWM_30min_avg"])
+```
+
+## Plot the imputed data for the 4200-5000 observations
+```{r, fig.height = 5, fig.width = 10}
+plotNA.imputations(x.withNA = sde3_less_df[4230:5000, "PWM_30min_avg"], x.withImputations = imp[4230:5000, "PWM_30min_avg"])
+```
+
+## Plot the imputed data for the 5000-6000 observations
+```{r, fig.height = 5, fig.width = 10}
+plotNA.imputations(x.withNA = sde3_less_df[5000:6000, "PWM_30min_avg"], x.withImputations = imp[5000:6000, "PWM_30min_avg"])
+```
+
+# Impute the missing values using ARIMA model and Kalman smoothing
+```{r}
+imp_arima <- na.kalman(sde3_less_df["PWM_30min_avg"], model = "auto.arima")
+```
+
+## Plot the imputed data
+```{r, fig.height = 5, fig.width = 10}
+plotNA.imputations(x.withNA = sde3_less_df$PWM_30min_avg, x.withImputations = imp_arima$PWM_30min_avg, cex=.1)
+```
+
+## Plot the imputed data for the 1st 5000 observations
+```{r, fig.height = 5, fig.width = 10}
+plotNA.imputations(x.withNA = sde3_less_df[1500:5000, "PWM_30min_avg"], x.withImputations = imp_arima[1500:5000, "PWM_30min_avg"], cex=.1)
+```
+
+Imputation of missing date in the large gaps fail to capture the variability seen in the time series data.
+
+## Plot the imputed data for the 2000-2500 observations
+```{r, fig.height = 5, fig.width = 10}
+plotNA.imputations(x.withNA = sde3_less_df[1950:2550, "PWM_30min_avg"], x.withImputations = imp_arima[1950:2550, "PWM_30min_avg"])
+```
+
+Imputation of missing data in the smaller gaps appear to be quite accurate.
+
+
+## Plot the imputed data for the 3500-4000 observations
+```{r, fig.height = 5, fig.width = 10}
+plotNA.imputations(x.withNA = sde3_less_df[3500:4000, "PWM_30min_avg"], x.withImputations = imp_arima[3500:4000, "PWM_30min_avg"])
+```
+
+## Plot the imputed data for the 4200-5000 observations
+```{r, fig.height = 5, fig.width = 10}
+plotNA.imputations(x.withNA = sde3_less_df[4230:5000, "PWM_30min_avg"], x.withImputations = imp_arima[4230:5000, "PWM_30min_avg"])
+```
+
+## Plot the imputed data for the 5000-6000 observations
+```{r, fig.height = 5, fig.width = 10}
+plotNA.imputations(x.withNA = sde3_less_df[5000:6000, "PWM_30min_avg"], x.withImputations = imp_arima[5000:6000, "PWM_30min_avg"])
+```
