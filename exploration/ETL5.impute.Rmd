@@ -1,8 +1,16 @@
 ---
-title: "ETL5 R Notebook"
-output:
-  github_document
+title: "KE5105 - Building Electrical Consumption Forecasting"
+output: github_document
 ---
+# Extract, Transform and Load Data 5 - Data Imputation"
+
+# Summary of Findings
+* Missing data in large gaps cannot be imputed accurately
+  * Value
+    * Structural model and spline produces outliers (in value)
+  * Variation
+    * Structural model, Arima and moving average fail to capture the variation in the time series
+* All methods perform similarly for small gaps
 
 # Load libraries
 ```{r}
@@ -12,13 +20,13 @@ library(imputeTS)
 ```
 
 # Load data
-```{r}
+```{r load_data, results='hide'}
 sde3_agg_df <- read.csv("/home/tkokkeng/Documents/KE5105/ETL/source/test_data/SDE-3.agg.csv", header = TRUE, stringsAsFactors = FALSE)
 head(sde3_agg_df)
 ```
 
 ## Convert the Pt_timeStamp strings to POSIX time
-```{r}
+```{r convert_data, results='hide'}
 sde3_agg_df$Pt_timeStamp <- strptime(sde3_agg_df$Pt_timeStamp, format = "%Y-%m-%d %H:%M:%S", tz="GMT")
 head(sde3_agg_df)
 ```
@@ -41,12 +49,12 @@ head(ts)
 ```
 
 ## Plot the time series data
-```{r, fig.height = 5, fig.width = 10}
+```{r all_sde3_data, fig.height = 5, fig.width = 10}
 autoplot(ts, ylab = "Aggregated PWM", xlab = "Time") + ggtitle("SDE-3 Aggregated PWM")
 ```
 
 ## Get the time series data before the data outage
-```{r}
+```{r sde3_data_less, results='hide'}
 sde3_less_df = sde3_agg_df[sde3_agg_df$Pt_timeStamp < as.POSIXct("2017-03-31 23:30:00"),]
 head(sde3_less_df)
 ```
@@ -58,13 +66,13 @@ head(ts)
 ```
 
 ## Plot the time series data
-```{r, fig.height = 3, fig.width = 10}
+```{r plot_sde3, fig.height = 3, fig.width = 10}
 autoplot(ts_less, ylab = "Aggregated PWM", xlab = "Time") +
   ggtitle("SDE-3 Aggregated PWM")
 ```
 
 ## Plot the missing data
-```{r, fig.height = 4, fig.width = 10}
+```{r plot_sde3_missing, fig.height = 4, fig.width = 10}
 plotNA.distribution(sde3_less_df$PWM_30min_avg, cex=.1)
 ```
 
@@ -78,7 +86,7 @@ plotNA.distributionBar(sde3_less_df$PWM_30min_avg, breaks = 20)
 plotNA.gapsize(sde3_less_df$PWM_30min_avg)
 ```
 
-# Impute the missing values using structural model and Kalman smoothing
+# Impute the missing values using different imputation methods
 ```{r}
 rownames(sde3_less_df) <- sde3_less_df$Pt_timeStamp
 head(sde3_less_df["PWM_30min_avg"])
@@ -86,81 +94,232 @@ head(sde3_less_df["PWM_30min_avg"])
 
 
 ```{r}
+# Impute the missing values using structural model and Kalman smoothing
 imp <- na.kalman(sde3_less_df["PWM_30min_avg"])
-#imp <- na.kalman(ts_less)
-```
-
-## Plot the imputed data
-```{r, fig.height = 5, fig.width = 10}
-plotNA.imputations(x.withNA = sde3_less_df$PWM_30min_avg, x.withImputations = imp$PWM_30min_avg, cex=.1)
-```
-
-Imputation missing data in the larger gaps appear wildly inaccurate.  
-
-## Plot the imputed data for the 1st 5000 observations
-```{r, fig.height = 5, fig.width = 10}
-plotNA.imputations(x.withNA = sde3_less_df[1500:5000, "PWM_30min_avg"], x.withImputations = imp[1500:5000, "PWM_30min_avg"], cex=.1)
-```
-
-## Plot the imputed data for the 2000-2500 observations
-```{r, fig.height = 5, fig.width = 10}
-plotNA.imputations(x.withNA = sde3_less_df[1950:2550, "PWM_30min_avg"], x.withImputations = imp[1950:2550, "PWM_30min_avg"])
-```
-
-Imputation of missing data in the smaller gaps appear to be quite accurate.
-
-
-## Plot the imputed data for the 3500-4000 observations
-```{r, fig.height = 5, fig.width = 10}
-plotNA.imputations(x.withNA = sde3_less_df[3500:4000, "PWM_30min_avg"], x.withImputations = imp[3500:4000, "PWM_30min_avg"])
-```
-
-## Plot the imputed data for the 4200-5000 observations
-```{r, fig.height = 5, fig.width = 10}
-plotNA.imputations(x.withNA = sde3_less_df[4230:5000, "PWM_30min_avg"], x.withImputations = imp[4230:5000, "PWM_30min_avg"])
-```
-
-## Plot the imputed data for the 5000-6000 observations
-```{r, fig.height = 5, fig.width = 10}
-plotNA.imputations(x.withNA = sde3_less_df[5000:6000, "PWM_30min_avg"], x.withImputations = imp[5000:6000, "PWM_30min_avg"])
-```
 
 # Impute the missing values using ARIMA model and Kalman smoothing
-```{r}
 imp_arima <- na.kalman(sde3_less_df["PWM_30min_avg"], model = "auto.arima")
+
+# Impute the missing values using spline interpolation
+imp_spline <- na.interpolation(sde3_less_df["PWM_30min_avg"], option = "spline")
+
+# Impute the missing values using moving average
+imp_ma <- na.ma(sde3_less_df["PWM_30min_avg"], k=4, weighting="exponential")
 ```
 
 ## Plot the imputed data
-```{r, fig.height = 5, fig.width = 10}
-plotNA.imputations(x.withNA = sde3_less_df$PWM_30min_avg, x.withImputations = imp_arima$PWM_30min_avg, cex=.1)
+```{r plot_struc_imp_all, fig.height = 5, fig.width = 10}
+# structural model with kalman smoothing
+plotNA.imputations(x.withNA = sde3_less_df$PWM_30min_avg,
+                   x.withImputations = imp$PWM_30min_avg,
+                   main = "Imputated Values Using Structural Model with Kalman Smoothing",
+                   ylim = c(-150, 450), cex = .1)
 ```
 
+
+```{r plot_arima_imp_all, fig.height = 5, fig.width = 10}
+# arima model with kalman smoothing 
+plotNA.imputations(x.withNA = sde3_less_df$PWM_30min_avg,
+                   x.withImputations = imp_arima$PWM_30min_avg,
+                   main = "Imputed Values Using Arima Model with Kalman Smoothing",
+                   ylim = c(-150, 450), cex = .1)
+```
+
+
+```{r plot_spline_imp_all, fig.height = 5, fig.width = 10}
+# spline interpolation
+plotNA.imputations(x.withNA = sde3_less_df$PWM_30min_avg,
+                   x.withImputations = imp_spline$PWM_30min_avg,
+                   main = "Imputated Values Using Spline Interpolation",
+                   ylim = c(-150, 450), cex = .1)
+```
+
+
+```{r plot_ma_imp_all, fig.height = 5, fig.width = 10}
+# exponential moving average
+plotNA.imputations(x.withNA = sde3_less_df$PWM_30min_avg,
+                   x.withImputations = imp_ma$PWM_30min_avg,
+                   main = "Imputed Values Using Exponential Moving Average",
+                   ylim = c(-150, 450), cex = .1)
+```
+
+Imputation missing data in the larger gaps appear wildly inaccurate for the structural model and spline interpolation. 
+
 ## Plot the imputed data for the 1st 5000 observations
-```{r, fig.height = 5, fig.width = 10}
-plotNA.imputations(x.withNA = sde3_less_df[1500:5000, "PWM_30min_avg"], x.withImputations = imp_arima[1500:5000, "PWM_30min_avg"], cex=.1)
+```{r plot_struc_imp1, fig.height = 5, fig.width = 10}
+plotNA.imputations(x.withNA = sde3_less_df[1500:5000, "PWM_30min_avg"],
+                   x.withImputations = imp[1500:5000, "PWM_30min_avg"],
+                   main = "Imputed Values Using Structural Model With Kalman Smoothing",
+                   cex=.1)
+```
+
+
+```{r plot_arima_imp1, fig.height = 5, fig.width = 10}
+plotNA.imputations(x.withNA = sde3_less_df[1500:5000, "PWM_30min_avg"],
+                   x.withImputations = imp_arima[1500:5000, "PWM_30min_avg"],
+                   main = "Imputed Values Using Arima Model with Kalman Smoothing", cex = .1)
 ```
 
 Imputation of missing date in the large gaps fail to capture the variability seen in the time series data.
 
+
+```{r plot_spline_imp1, fig.height = 5, fig.width = 10}
+plotNA.imputations(x.withNA = sde3_less_df[1500:5000, "PWM_30min_avg"],
+                   x.withImputations = imp_spline[1500:5000, "PWM_30min_avg"],
+                   main = "Imputed Values Using Spline Interpolation", cex = .1)
+```
+
+Imputation of missing date in the large gaps by spline interpolation captures better the variability seen in the time series data than the other methods.
+
+```{r plot_ma_imp1, fig.height = 5, fig.width = 10}
+plotNA.imputations(x.withNA = sde3_less_df[1500:5000, "PWM_30min_avg"],
+                   x.withImputations = imp_ma[1500:5000, "PWM_30min_avg"],
+                   main = "Imputed Values Using Exponential Moving Average", cex = .1)
+```
+
 ## Plot the imputed data for the 2000-2500 observations
-```{r, fig.height = 5, fig.width = 10}
-plotNA.imputations(x.withNA = sde3_less_df[1950:2550, "PWM_30min_avg"], x.withImputations = imp_arima[1950:2550, "PWM_30min_avg"])
+```{r plot_struc_imp2, fig.height = 5, fig.width = 10}
+plotNA.imputations(x.withNA = sde3_less_df[1950:2550, "PWM_30min_avg"],
+                   x.withImputations = imp[1950:2550, "PWM_30min_avg"],
+                   main = "Imputed Values Using Structural Model With Kalman Smoothing",
+                   ylim = c(30, 140))
+```
+
+
+```{r plot_arima_imp2, fig.height = 5, fig.width = 10}
+plotNA.imputations(x.withNA = sde3_less_df[1950:2550, "PWM_30min_avg"],
+                   x.withImputations = imp_arima[1950:2550, "PWM_30min_avg"],
+                   main = "Imputed Values Using Arima Model With Kalman Smoothing",
+                   ylim = c(30, 140))
+```
+
+
+```{r plot_spline_imp2, fig.height = 5, fig.width = 10}
+plotNA.imputations(x.withNA = sde3_less_df[1950:2550, "PWM_30min_avg"],
+                   x.withImputations = imp_spline[1950:2550, "PWM_30min_avg"],
+                   main = "Imputed Values Using Spline Interpolation",
+                   ylim = c(30, 140))
+```
+
+
+```{r plot_ma_imp2, fig.height = 5, fig.width = 10}
+plotNA.imputations(x.withNA = sde3_less_df[1950:2550, "PWM_30min_avg"],
+                   x.withImputations = imp_ma[1950:2550, "PWM_30min_avg"],
+                   main = "Imputed Values Using Exponential Moving Average",
+                   ylim = c(30, 140))
 ```
 
 Imputation of missing data in the smaller gaps appear to be quite accurate.
 
-
 ## Plot the imputed data for the 3500-4000 observations
-```{r, fig.height = 5, fig.width = 10}
+```{r plot_struc_imp3, fig.height = 5, fig.width = 10}
+plotNA.imputations(x.withNA = sde3_less_df[3500:4000, "PWM_30min_avg"], x.withImputations = imp[3500:4000, "PWM_30min_avg"])
+```
+
+
+```{r plot_arima_imp3, fig.height = 5, fig.width = 10}
 plotNA.imputations(x.withNA = sde3_less_df[3500:4000, "PWM_30min_avg"], x.withImputations = imp_arima[3500:4000, "PWM_30min_avg"])
 ```
 
+
+```{r plot_spline_imp3, fig.height = 5, fig.width = 10}
+plotNA.imputations(x.withNA = sde3_less_df[3500:4000, "PWM_30min_avg"], x.withImputations = imp_spline[3500:4000, "PWM_30min_avg"])
+```
+
+
+```{r plot_ma_imp3, fig.height = 5, fig.width = 10}
+plotNA.imputations(x.withNA = sde3_less_df[3500:4000, "PWM_30min_avg"], x.withImputations = imp_ma[3500:4000, "PWM_30min_avg"])
+```
+
 ## Plot the imputed data for the 4200-5000 observations
-```{r, fig.height = 5, fig.width = 10}
+```{r plot_struc_imp4, fig.height = 5, fig.width = 10}
+plotNA.imputations(x.withNA = sde3_less_df[4230:5000, "PWM_30min_avg"], x.withImputations = imp[4230:5000, "PWM_30min_avg"])
+```
+
+
+```{r plot_arima_imp4, fig.height = 5, fig.width = 10}
 plotNA.imputations(x.withNA = sde3_less_df[4230:5000, "PWM_30min_avg"], x.withImputations = imp_arima[4230:5000, "PWM_30min_avg"])
 ```
 
+
+```{r plot_spline_imp4, fig.height = 5, fig.width = 10}
+plotNA.imputations(x.withNA = sde3_less_df[4230:5000, "PWM_30min_avg"], x.withImputations = imp_spline[4230:5000, "PWM_30min_avg"])
+```
+
+
+```{r plot_ma_imp4, fig.height = 5, fig.width = 10}
+plotNA.imputations(x.withNA = sde3_less_df[4230:5000, "PWM_30min_avg"], x.withImputations = imp_ma[4230:5000, "PWM_30min_avg"])
+```
+
 ## Plot the imputed data for the 5000-6000 observations
-```{r, fig.height = 5, fig.width = 10}
+```{r plot_struc_imp5, fig.height = 5, fig.width = 10}
+plotNA.imputations(x.withNA = sde3_less_df[5000:6000, "PWM_30min_avg"], x.withImputations = imp[5000:6000, "PWM_30min_avg"])
+```
+
+
+```{r plot_arima_imp5, fig.height = 5, fig.width = 10}
 plotNA.imputations(x.withNA = sde3_less_df[5000:6000, "PWM_30min_avg"], x.withImputations = imp_arima[5000:6000, "PWM_30min_avg"])
 ```
+
+
+```{r plot_spline_imp5, fig.height = 5, fig.width = 10}
+plotNA.imputations(x.withNA = sde3_less_df[5000:6000, "PWM_30min_avg"], x.withImputations = imp_spline[5000:6000, "PWM_30min_avg"])
+```
+
+
+```{r plot_ma_imp5, fig.height = 5, fig.width = 10}
+plotNA.imputations(x.withNA = sde3_less_df[5000:6000, "PWM_30min_avg"], x.withImputations = imp_ma[5000:6000, "PWM_30min_avg"])
+```
+
+## Plot the imputed data at 14000 observations
+```{r plot_struc_imp6, fig.height = 5, fig.width = 10}
+plotNA.imputations(x.withNA = sde3_less_df[13500:14500, "PWM_30min_avg"], x.withImputations = imp[13500:14500, "PWM_30min_avg"])
+```
+
+
+```{r plot_arima_imp6, fig.height = 5, fig.width = 10}
+plotNA.imputations(x.withNA = sde3_less_df[13500:14500, "PWM_30min_avg"], x.withImputations = imp_arima[13500:14500, "PWM_30min_avg"])
+```
+
+
+```{r plot_spline_imp6, fig.height = 5, fig.width = 10}
+plotNA.imputations(x.withNA = sde3_less_df[13500:14500, "PWM_30min_avg"], x.withImputations = imp_spline[13500:14500, "PWM_30min_avg"])
+```
+
+
+```{r plot_ma_imp6, fig.height = 5, fig.width = 10}
+plotNA.imputations(x.withNA = sde3_less_df[13500:14500, "PWM_30min_avg"], x.withImputations = imp_ma[13500:14500, "PWM_30min_avg"])
+```
+
+## Plot the imputed data for the >30000 observations
+```{r plot_struc_imp7, fig.height = 5, fig.width = 10}
+plotNA.imputations(x.withNA = sde3_less_df[31900:32200, "PWM_30min_avg"],
+                   x.withImputations = imp[31900:32200, "PWM_30min_avg"],
+                   main = "Imputed Values Using Structural Model with Kalman Smoothing",
+                   ylim = c(-25, 130))
+```
+
+
+```{r plot_arima_imp7, fig.height = 5, fig.width = 10}
+plotNA.imputations(x.withNA = sde3_less_df[31900:32200, "PWM_30min_avg"],
+                   x.withImputations = imp_arima[31900:32200, "PWM_30min_avg"],
+                   main = "Imputed Values Using Arima Model with Kalman Smoothing",
+                   ylim = c(-25, 130))
+```
+
+
+```{r plot_spline_imp7, fig.height = 5, fig.width = 10}
+plotNA.imputations(x.withNA = sde3_less_df[31900:32200, "PWM_30min_avg"],
+                   x.withImputations = imp_spline[31900:32200, "PWM_30min_avg"],
+                   main = "Imputed Values Using Spline Interpolation",
+                   ylim = c(-25, 130))
+```
+
+
+```{r plot_ma_imp7, fig.height = 5, fig.width = 10}
+plotNA.imputations(x.withNA = sde3_less_df[31900:32200, "PWM_30min_avg"],
+                   x.withImputations = imp_ma[31900:32200, "PWM_30min_avg"],
+                   main = "Imputed Values Using Exponential Moving Average",
+                   ylim = c(-25, 130))
+```
+
