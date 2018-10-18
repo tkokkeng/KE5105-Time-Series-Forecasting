@@ -1,0 +1,83 @@
+---
+title: "KE5105 - Building Electrical Consumption Forecasting"
+output: github_document
+---
+# Extract, Transform and Load Data 5 - Data Imputation
+
+# Summary of Findings
+* to be filled in
+  * to be filled in
+    * to be filled in
+
+# Load libraries
+```{r}
+library(ggplot2)
+library(xts)
+library(imputeTS)
+```
+
+# Load data
+```{r load_data, results='hide'}
+sde3_agg_df <- read.csv("/home/tkokkeng/Documents/KE5105/ETL/source/test_data/SDE-3.agg.csv", header = TRUE, stringsAsFactors = FALSE)
+head(sde3_agg_df)
+```
+
+## Convert the Pt_timeStamp strings to POSIX time
+```{r convert_data, results='hide'}
+sde3_agg_df$Pt_timeStamp <- strptime(sde3_agg_df$Pt_timeStamp, format = "%Y-%m-%d %H:%M:%S", tz="GMT")
+head(sde3_agg_df)
+```
+
+## Look for the largest contiguous subset of non-NA data
+```{r}
+PWM_notNA_df <- data.frame(sde3_agg_df$PWM_30min_avg)
+head(PWM_notNA_df)
+```
+
+Get a cumulative count of the NAs.
+```{r}
+PWM_notNA_df$na_cumsum = cumsum(is.na(PWM_notNA_df$sde3_agg_df.PWM_30min_avg))
+head(PWM_notNA_df)
+```
+
+Remove the rows with NAs, leaving only the data rows. Each consective data row has a unique cumulative count.
+```{r}
+PWM_notNA_df <- PWM_notNA_df[!is.na(PWM_notNA_df$sde3_agg_df.PWM_30min_avg),]
+head(PWM_notNA_df)
+```
+
+Group the data rows by their cumulative count and get the frequency which is the size of each contiguous block of data. 
+```{r}
+PWM_notNA_df <- as.data.frame(table(PWM_notNA_df$na_cumsum), stringsAsFactors = FALSE)
+colnames(PWM_notNA_df) <- c("row", "size")
+PWM_notNA_df$row = as.integer(PWM_notNA_df$row)
+head(PWM_notNA_df)
+```
+
+Offset the row numbers to get the correct row index. 
+```{r}
+PWM_notNA_df[2:nrow(PWM_notNA_df), c("row")] <- tail(PWM_notNA_df$row, -1) + head(cumsum(PWM_notNA_df$size), -1) + 1
+head(PWM_notNA_df)
+```
+
+Find the biggest contiguous data blocks. 
+```{r}
+PWM_notNA_df[which(PWM_notNA_df$size == max(PWM_notNA_df$size)),]
+```
+
+Plot the data.
+```{r}
+ts <- xts(sde3_agg_df[17570:(17570+1485-1),]$PWM_30min_avg, sde3_agg_df[17570:(17570+1485-1),]$Pt_timeStamp)
+```
+
+## Plot the time series data for a period without missing data
+```{r plot_sde3, fig.height = 3, fig.width = 10}
+autoplot(ts, ylab = "Aggregated PWM for a Period without Missing Data", xlab = "Time") +
+  ggtitle("SDE-3 Aggregated PWM")
+```
+
+
+```{r}
+which(is.na(sde3_agg_df[17570:(17570+1485),]$PWM_30min_avg))
+```
+
