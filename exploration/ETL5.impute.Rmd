@@ -2,7 +2,7 @@
 title: "KE5105 - Building Electrical Consumption Forecasting"
 output: github_document
 ---
-# Extract, Transform and Load Data 5 - Data Imputation"
+# Extract, Transform and Load Data 5 - Data Imputation
 
 # Summary of Findings
 * Missing data in large gaps cannot be imputed accurately
@@ -11,12 +11,15 @@ output: github_document
   * Variation
     * Structural model, Arima and moving average fail to capture the variation in the time series
 * All methods perform similarly for small gaps
+* Test for missing completely at random (MCAR) patterns show no evidence that the missing data is not MCAR. 
+
 
 # Load libraries
 ```{r}
 library(ggplot2)
 library(xts)
 library(imputeTS)
+library(MissMech)
 ```
 
 # Load data
@@ -62,7 +65,7 @@ head(sde3_less_df)
 
 ```{r}
 ts_less <- xts(sde3_less_df$PWM_30min_avg, as.Date(sde3_less_df$Pt_timeStamp))
-head(ts)
+head(ts_less)
 ```
 
 ## Plot the time series data
@@ -88,8 +91,8 @@ plotNA.gapsize(sde3_less_df$PWM_30min_avg)
 
 # Impute the missing values using different imputation methods
 ```{r}
-rownames(sde3_less_df) <- sde3_less_df$Pt_timeStamp
-head(sde3_less_df["PWM_30min_avg"])
+#rownames(sde3_less_df) <- sde3_less_df$Pt_timeStamp
+#head(sde3_less_df["PWM_30min_avg"])
 ```
 
 
@@ -322,4 +325,53 @@ plotNA.imputations(x.withNA = sde3_less_df[31900:32200, "PWM_30min_avg"],
                    main = "Imputed Values Using Exponential Moving Average",
                    ylim = c(-25, 130))
 ```
+
+## Prepare the data for MCAR test.
+```{r}
+sde3_less_df$time <- as.numeric(rownames(sde3_less_df))
+head(sde3_less_df)
+```
+
+## Check the normality of the distribution.
+```{r plot_distribution_density}
+plot(density(sde3_less_df$PWM_30min_avg, na.rm = TRUE))
+```
+
+## Perform the Shapiro-Wilks normality test. 
+```{r}
+shapiro.test(sde3_less_df[sde3_less_df$time > 5000 & sde3_less_df$time < 6000, c("PWM_30min_avg")])
+```
+
+The distribution of the data is significantly different from normal distribution.
+
+## Perform the test for MCAR (missing completely at random) for 1st subset of time series data assuming non-normal data distribution
+
+The dataset is split into two because of a memory resource limit.
+```{r}
+out <- TestMCARNormality(data=sde3_less_df[sde3_less_df$time > 5000 & sde3_less_df$time < 17000, c("time", "PWM_30min_avg")],
+                         method = "Nonparametric")
+```
+
+
+```{r}
+summary(out)
+```
+
+There is evidence to reject the null hypothesis (the missing data pattern is **not** MCAR).
+
+## Perform the test for MCAR (missing completely at random) for 2nd subset of time series data
+```{r}
+out <- TestMCARNormality(data=sde3_less_df[sde3_less_df$time > 17000 & sde3_less_df$time < 29000, c("time", "PWM_30min_avg")],
+                         method = "Nonparametric")
+```
+
+
+```{r}
+summary(out)
+```
+
+There is not enough evidence to reject the null hypothesis (the missing data pattern is MCAR).
+
+
+
 

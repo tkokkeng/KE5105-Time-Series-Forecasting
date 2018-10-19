@@ -1,8 +1,8 @@
 KE5105 - Building Electrical Consumption Forecasting
 ================
 
-Extract, Transform and Load Data 5 - Data Imputation"
-=====================================================
+Extract, Transform and Load Data 5 - Data Imputation
+====================================================
 
 Summary of Findings
 ===================
@@ -13,6 +13,7 @@ Summary of Findings
 -   Variation
     -   Structural model, Arima and moving average fail to capture the variation in the time series
 -   All methods perform similarly for small gaps
+-   Test for missing completely at random (MCAR) patterns show no evidence that the missing data is not MCAR.
 
 Load libraries
 ==============
@@ -41,6 +42,10 @@ library(imputeTS)
     ## The following object is masked from 'package:zoo':
     ## 
     ##     na.locf
+
+``` r
+library(MissMech)
+```
 
 Load data
 =========
@@ -107,7 +112,7 @@ head(sde3_less_df)
 
 ``` r
 ts_less <- xts(sde3_less_df$PWM_30min_avg, as.Date(sde3_less_df$Pt_timeStamp))
-head(ts)
+head(ts_less)
 ```
 
     ##            [,1]
@@ -161,17 +166,9 @@ Impute the missing values using different imputation methods
 ============================================================
 
 ``` r
-rownames(sde3_less_df) <- sde3_less_df$Pt_timeStamp
-head(sde3_less_df["PWM_30min_avg"])
+#rownames(sde3_less_df) <- sde3_less_df$Pt_timeStamp
+#head(sde3_less_df["PWM_30min_avg"])
 ```
-
-    ##                     PWM_30min_avg
-    ## 2015-05-01 00:00:00            NA
-    ## 2015-05-01 00:30:00            NA
-    ## 2015-05-01 01:00:00            NA
-    ## 2015-05-01 01:30:00            NA
-    ## 2015-05-01 02:00:00            NA
-    ## 2015-05-01 02:30:00            NA
 
 ``` r
 # Impute the missing values using structural model and Kalman smoothing
@@ -459,3 +456,169 @@ plotNA.imputations(x.withNA = sde3_less_df[31900:32200, "PWM_30min_avg"],
 ```
 
 ![](ETL5.impute_files/figure-markdown_github/plot_ma_imp7-1.png)
+
+Prepare the data for MCAR test.
+-------------------------------
+
+``` r
+sde3_less_df$time <- as.numeric(rownames(sde3_less_df))
+head(sde3_less_df)
+```
+
+    ##          Pt_timeStamp PWM.SDE3.IC1 PWM.SDE3.IC2 PWM.SDE3.MCC..AC.
+    ## 1 2015-05-01 00:00:00           NA           NA                NA
+    ## 2 2015-05-01 00:30:00           NA           NA                NA
+    ## 3 2015-05-01 01:00:00           NA           NA                NA
+    ## 4 2015-05-01 01:30:00           NA           NA                NA
+    ## 5 2015-05-01 02:00:00           NA           NA                NA
+    ## 6 2015-05-01 02:30:00           NA           NA                NA
+    ##   PWM.CELC.IC1 PWM.CELC.IC2 PWM.SDE1 PWM.SDE2.SSB PWM.SDE2.AC PWM.SDE3.Ext
+    ## 1           NA           NA       NA           NA          NA           NA
+    ## 2           NA           NA       NA           NA          NA           NA
+    ## 3           NA           NA       NA           NA          NA           NA
+    ## 4           NA           NA       NA           NA          NA           NA
+    ## 5           NA           NA       NA           NA          NA           NA
+    ## 6           NA           NA       NA           NA          NA           NA
+    ##   PWM.Street.Light BTU.SDE3.Chiller.Plant BTU.SDE3.2 BTU.SDE3.1.2
+    ## 1               NA                     NA         NA           NA
+    ## 2               NA                     NA         NA           NA
+    ## 3               NA                     NA         NA           NA
+    ## 4               NA                     NA         NA           NA
+    ## 5               NA                     NA         NA           NA
+    ## 6               NA                     NA         NA           NA
+    ##   PWM.SDE3.IC1_30min_avg PWM.SDE3.IC2_30min_avg
+    ## 1                     NA                     NA
+    ## 2                     NA                     NA
+    ## 3                     NA                     NA
+    ## 4                     NA                     NA
+    ## 5                     NA                     NA
+    ## 6                     NA                     NA
+    ##   PWM.SDE3.MCC..AC._30min_avg PWM.CELC.IC1_30min_avg
+    ## 1                          NA                     NA
+    ## 2                          NA                     NA
+    ## 3                          NA                     NA
+    ## 4                          NA                     NA
+    ## 5                          NA                     NA
+    ## 6                          NA                     NA
+    ##   PWM.CELC.IC2_30min_avg PWM.SDE1_30min_avg PWM.SDE2.SSB_30min_avg
+    ## 1                     NA                 NA                     NA
+    ## 2                     NA                 NA                     NA
+    ## 3                     NA                 NA                     NA
+    ## 4                     NA                 NA                     NA
+    ## 5                     NA                 NA                     NA
+    ## 6                     NA                 NA                     NA
+    ##   PWM.SDE2.AC_30min_avg PWM.SDE3.Ext_30min_avg PWM.Street.Light_30min_avg
+    ## 1                    NA                     NA                         NA
+    ## 2                    NA                     NA                         NA
+    ## 3                    NA                     NA                         NA
+    ## 4                    NA                     NA                         NA
+    ## 5                    NA                     NA                         NA
+    ## 6                    NA                     NA                         NA
+    ##   BTU.SDE3.Chiller.Plant_30min_avg BTU.SDE3.2_30min_avg
+    ## 1                               NA                   NA
+    ## 2                               NA                   NA
+    ## 3                               NA                   NA
+    ## 4                               NA                   NA
+    ## 5                               NA                   NA
+    ## 6                               NA                   NA
+    ##   BTU.SDE3.1.2_30min_avg PWM_30min_avg time
+    ## 1                     NA            NA    1
+    ## 2                     NA            NA    2
+    ## 3                     NA            NA    3
+    ## 4                     NA            NA    4
+    ## 5                     NA            NA    5
+    ## 6                     NA            NA    6
+
+Check the normality of the distribution.
+----------------------------------------
+
+``` r
+plot(density(sde3_less_df$PWM_30min_avg, na.rm = TRUE))
+```
+
+![](ETL5.impute_files/figure-markdown_github/plot_distribution_density-1.png)
+
+Perform the Shapiro-Wilks normality test.
+-----------------------------------------
+
+``` r
+shapiro.test(sde3_less_df[sde3_less_df$time > 5000 & sde3_less_df$time < 6000, c("PWM_30min_avg")])
+```
+
+    ## 
+    ##  Shapiro-Wilk normality test
+    ## 
+    ## data:  sde3_less_df[sde3_less_df$time > 5000 & sde3_less_df$time < 6000,     c("PWM_30min_avg")]
+    ## W = 0.86087, p-value < 2.2e-16
+
+The distribution of the data is significantly different from normal distribution.
+
+Perform the test for MCAR (missing completely at random) for 1st subset of time series data assuming non-normal data distribution
+---------------------------------------------------------------------------------------------------------------------------------
+
+The dataset is split into two because of a memory resource limit.
+
+``` r
+out <- TestMCARNormality(data=sde3_less_df[sde3_less_df$time > 5000 & sde3_less_df$time < 17000, c("time", "PWM_30min_avg")],
+                         method = "Nonparametric")
+```
+
+``` r
+summary(out)
+```
+
+    ## 
+    ## Number of imputation:  1 
+    ## 
+    ## Number of Patterns:  2 
+    ## 
+    ## Total number of cases used in the analysis:  11999 
+    ## 
+    ##  Pattern(s) used:
+    ##           time   PWM_30min_avg   Number of cases
+    ## group.1      1               1             11176
+    ## group.2      1              NA               823
+    ## 
+    ## 
+    ##     Test of normality and Homoscedasticity:
+    ##   -------------------------------------------
+    ## 
+    ## Non-Parametric Test:
+    ## 
+    ##     P-value for the non-parametric test of homoscedasticity:  0
+
+There is evidence to reject the null hypothesis (the missing data pattern is **not** MCAR).
+
+Perform the test for MCAR (missing completely at random) for 2nd subset of time series data
+-------------------------------------------------------------------------------------------
+
+``` r
+out <- TestMCARNormality(data=sde3_less_df[sde3_less_df$time > 17000 & sde3_less_df$time < 29000, c("time", "PWM_30min_avg")],
+                         method = "Nonparametric")
+```
+
+``` r
+summary(out)
+```
+
+    ## 
+    ## Number of imputation:  1 
+    ## 
+    ## Number of Patterns:  2 
+    ## 
+    ## Total number of cases used in the analysis:  11999 
+    ## 
+    ##  Pattern(s) used:
+    ##           time   PWM_30min_avg   Number of cases
+    ## group.1      1               1             11941
+    ## group.2      1              NA                58
+    ## 
+    ## 
+    ##     Test of normality and Homoscedasticity:
+    ##   -------------------------------------------
+    ## 
+    ## Non-Parametric Test:
+    ## 
+    ##     P-value for the non-parametric test of homoscedasticity:  0.1970036
+
+There is not enough evidence to reject the null hypothesis (the missing data pattern is MCAR).
