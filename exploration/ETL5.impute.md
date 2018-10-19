@@ -13,7 +13,7 @@ Summary of Findings
 -   Variation
     -   Structural model, Arima and moving average fail to capture the variation in the time series
 -   All methods perform similarly for small gaps
--   Test for missing completely at random (MCAR) patterns show no evidence that the missing data is not MCAR.
+-   Test for missing completely at random (MCAR) patterns show some evidence that the missing data is not MCAR.
 
 Load libraries
 ==============
