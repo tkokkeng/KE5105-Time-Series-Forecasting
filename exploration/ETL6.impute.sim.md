@@ -7,9 +7,12 @@ Extract, Transform and Load Data 5 - Data Imputation
 Summary of Findings
 ===================
 
--   to be filled in
--   to be filled in
-    -   to be filled in
+-   Tested SDE-3 time series data for MCAR (missing completely at random) \[1\] patterns; evidence show non-MCAR missing data patterns
+-   10 periods without any missing data of around 30-day duration is selected from SDE-3 data
+-   Missing data in these 10 periods are simulated assuming the missing data occurs according to an exponential distribution
+    -   many missing observations in industrial datasets follow an exponential distribution \[1\]
+
+\[1\] S. Moritz, A. Sardá, T. Bartz-Beielstein, M. Zaefferer, and J. Stork. Comparison of different Methods for Univariate Time Series Imputation in R. ArXiv e-prints, Oct. 2015.
 
 Load libraries
 ==============
@@ -215,6 +218,10 @@ create.missing <- function(data, rate, seed=NULL) {
 }
 ```
 
+#### Exponential Distribution (<https://en.wikipedia.org/wiki/Exponential_distribution>)
+
+![Exponential Distribution](./images/360px-Exponential_pdf.svg.png)
+
 ### Simulate missing data for 1 contiguous data block
 
 ``` r
@@ -271,6 +278,23 @@ plot.ts(tsm, plot.type = "multiple", type = "o", pch = 19, cex = .4, main = "Agg
 ``` r
 #title("Aggregated PWM with Simulated Missing Data")
 ```
+
+### Distribution of simulated missing data
+
+``` r
+plotNA.distributionBar(missing$data, breaks = 50)
+```
+
+![](ETL6.impute.sim_files/figure-markdown_github/distribution_NA-1.png)
+
+Plot the distribution of the missing data by gap size
+-----------------------------------------------------
+
+``` r
+plotNA.gapsize(missing$data)
+```
+
+![](ETL6.impute.sim_files/figure-markdown_github/distribution_NA_gapsize-1.png)
 
 Create the simulated missing data for a set of contiguous data blocks.
 ----------------------------------------------------------------------
