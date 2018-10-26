@@ -1,0 +1,204 @@
+---
+title: "KE5105 - Building Electrical Consumption Forecasting"
+output: github_document
+---
+
+# Extract, Transform and Load Data 7 - Data Imputation
+
+# Summary of Findings
+* to be filled in
+    * to be filled in
+  
+# Load libraries
+```{r}
+library(ggplot2)
+library(xts)
+library(imputeTS)
+```
+
+# Load data
+```{r load_data, results='hide'}
+# SDE-3 time series data
+sde3_agg_df <- read.csv("/home/tkokkeng/Documents/KE5105/ETL/source/test_data/SDE-3.agg.csv", header = TRUE, stringsAsFactors = FALSE)
+
+# A list of 10 time series datasets with simulated missing data
+missing_list <- readRDS("sim_missing_data.rds")
+```
+
+
+```{r}
+length(missing_list)
+```
+
+
+```{r}
+num_lambdas = length(missing_list)
+num_datasets = length(missing_list[[1]])-1  # each list has lambda, missing1, ..., missing<n>
+
+results = vector('list', num_lambdas * num_datasets) 
+idx = 1
+for (i in missing_list) {
+
+  for (j in 1:num_datasets) {
+  # test data
+  data_with_na = i[[j+1]]$data
+  data_true = sde3_agg_df[i[[j+1]]$row:(i[[j+1]]$row+i[[j+1]]$size-1), ]$PWM_30min_avg
+  na_true = data_true[i[[j+1]]$na.ind]
+  
+  # Impute the missing values using structural model and Kalman smoothing
+  imp_struct <- na.kalman(data_with_na)
+  # Impute the missing values using ARIMA model and Kalman smoothing
+  imp_arima <- na.kalman(data_with_na, model = "auto.arima")
+  # Impute the missing values using spline interpolation
+  imp_spline <- na.interpolation(data_with_na, option = "spline")
+  # Impute the missing values using moving average
+  imp_ma <- na.ma(data_with_na, k=4, weighting="exponential")  
+
+  # Extract all the imputed na values
+  na_imp_struct = imp_struct[i[[j+1]]$na.ind]
+  na_imp_arima = imp_arima[i[[j+1]]$na.ind]
+  na_imp_spline = imp_spline[i[[j+1]]$na.ind]
+  na_imp_ma = imp_ma[i[[j+1]]$na.ind]
+  
+  # compute rmse
+  rmse_struct = sqrt(mean((na_imp_struct - na_true)^2))
+  rmse_arima = sqrt(mean((na_imp_arima - na_true)^2))
+  rmse_spline = sqrt(mean((na_imp_spline - na_true)^2))
+  rmse_ma = sqrt(mean((na_imp_ma - na_true)^2))
+  
+  #Update results
+  results[[idx]] <- c(i$lambda, rmse_struct, rmse_arima, rmse_spline, rmse_ma)
+  idx = idx + 1
+  }
+}  
+```
+
+
+```{r}
+results_df = as.data.frame(matrix(unlist(results), nrow = length(results), byrow = TRUE))
+colnames(results_df) = c("lambda", "struc", "arima", "spline", "ma")
+results_df
+```
+
+
+```{r}
+colMeans(results_df)
+# same as apply(results_df, 2, mean)
+```
+
+```{r}
+apply(results_df, 2, sd)
+```
+
+
+```{r}
+aggregate(results_df[, 2:5], list(lambda = results_df$lambda), mean)
+```
+
+
+```{r}
+aggregate(results_df[, 2:5], list(lambda = results_df$lambda), sd)
+```
+There are **outliers** in the RMSE for ARIMA imputation for test samples #6 and #10.
+
+## Check the outliers in the ARIMA imputation.
+```{r}
+num_lambdas = 1
+num_datasets = 2
+
+results = vector('list', num_lambdas * num_datasets) 
+idx = 1
+  #for (j in 1:num_datasets) {
+  for (j in list(7, 11, 5)) {
+  # test data
+  data_with_na = missing_list[[2]][[j]]$data
+  data_true = sde3_agg_df[missing_list[[2]][[j]]$row:(missing_list[[2]][[j]]$row+missing_list[[2]][[j]]$size-1), ]$PWM_30min_avg
+  na_true = data_true[missing_list[[2]][[j]]$na.ind]
+  
+  # Impute the missing values using ARIMA model and Kalman smoothing
+  imp_arima <- na.kalman(data_with_na, model = "auto.arima")
+
+  # Extract all the imputed na values
+  na_imp_arima = imp_arima[missing_list[[2]][[j]]$na.ind]
+
+  # compute rmse
+  rmse_arima = sqrt(mean((na_imp_arima - na_true)^2))
+
+  #Update results
+  results[[idx]] <- c(lambda=missing_list[[2]]$lambda, rmse=rmse_arima, imp=list(imp_arima), data.withNA=list(data_with_na))
+  idx = idx + 1
+}  
+```
+
+
+```{r plot_arima_imp_outliers1, fig.height = 5, fig.width = 10}
+plotNA.imputations(x.withNA = results[[1]]$data.withNA,
+                   x.withImputations = results[[1]]$imp,
+                   main = "Imputated Values with High RMSE Using ARIMA Model with Kalman Smoothing",
+                   ylim = c(-10, 150), cex = .1)
+```
+
+```{r plot_arima_imp_outliers2, fig.height = 5, fig.width = 10}
+plotNA.imputations(x.withNA = results[[2]]$data.withNA,
+                   x.withImputations = results[[2]]$imp,
+                   main = "Poorly Imputated Values with High RMSE Using ARIMA Model with Kalman Smoothing",
+                   ylim = c(-10, 100), cex = .1)
+```
+
+
+```{r plot_arima_imp_normal, fig.height = 5, fig.width = 10}
+plotNA.imputations(x.withNA = results[[3]]$data.withNA,
+                   x.withImputations = results[[3]]$imp,
+                   main = "Imputated Values with Low RMSE Using ARIMA Model with Kalman Smoothing",
+                   ylim = c(30, 150), cex = .1)
+```
+
+## Check for significance in the difference in the means of the RMSE.
+
+### One-way ANOVA
+
+#### Determine whether the means from the 4 imputation methods are equal.
+```{r}
+results_long_df <- reshape(results_df, varying = c('struc', 'arima', 'spline', 'ma'),
+                           timevar = "method", v.names='RMSE',
+                           times=c('struc', 'arima', 'spline', 'ma'), direction="long")
+results_long_df$method <- as.factor(results_long_df$method)
+head(results_long_df)
+```
+
+
+```{r}
+for (i in list(.1, .2, .25)) {
+  plot(RMSE ~ method, data = results_long_df[results_long_df$lambda == i, ], main = paste("lambda =", toString(i)))
+}
+```
+
+
+```{r}
+res = aov(RMSE ~ method, data = results_long_df[results_long_df$lambda == .1, ])
+summary(res)
+```
+
+The anova test found **insufficient evidence** to show that the differences are significant.
+
+### Pairwise t-test for lambda .1, .2, .25 (exclude .15 due to outliers in ARIMA)
+
+Pairwise multiple comparisons tests involve the computation of a p-value for each pair of the compared group. The p-value represents the risk of stating that an effect is statistically significant while this is not true. As the number of pairwise comparisons increases, and therefore the number of p-values, it becomes more likely to detect significant effects which are due to chance in reality.
+
+To deal with this problem, multiple pairwise comparisons tests involve p-value corrections: p-values are penalized (= their value is increased) as the number of comparisons increase.
+
+#### Results Summary
+for lambda = 0.1, no significant differences.
+for lambda = 0.2, spline > arima, ma > arima, ma > struc, spline > struc
+for lambda = 0.25, spline > ma, spline > arima, ma > arima, ma > struc, spline > struc
+
+```{r}
+for (i in list(.1, .2, .25)) {
+  cat("lambda = ", i, "\n")
+  print(pairwise.t.test(results_long_df[results_long_df$lambda == i,]$RMSE,
+                        results_long_df[results_long_df$lambda == i,]$method,
+                        p.adjust = "bonferroni"))
+  cat("--------------------------------------------------------------------------------------------------------------\n")
+}
+```
+
