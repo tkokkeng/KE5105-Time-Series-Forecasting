@@ -162,6 +162,72 @@ plotNA.gapsize(sde3_less_df$PWM_30min_avg)
 
 ![](ETL5.impute_files/figure-markdown_github/unnamed-chunk-6-1.png)
 
+Missing data statistics
+-----------------------
+
+``` r
+statsNA(sde3_less_df$PWM_30min_avg, bins = 22)
+```
+
+    ## [1] "Length of time series:"
+    ## [1] 33631
+    ## [1] "-------------------------"
+    ## [1] "Number of Missing Values:"
+    ## [1] 4381
+    ## [1] "-------------------------"
+    ## [1] "Percentage of Missing Values:"
+    ## [1] "13%"
+    ## [1] "-------------------------"
+    ## [1] "Stats for Bins"
+    ## [1] "  Bin 1 (1529 values from 1 to 1529) :      1529 NAs (100%)"
+    ## [1] "  Bin 2 (1529 values from 1530 to 3058) :      1011 NAs (66.1%)"
+    ## [1] "  Bin 3 (1529 values from 3059 to 4587) :      822 NAs (53.8%)"
+    ## [1] "  Bin 4 (1529 values from 4588 to 6116) :      5 NAs (0.327%)"
+    ## [1] "  Bin 5 (1529 values from 6117 to 7645) :      3 NAs (0.196%)"
+    ## [1] "  Bin 6 (1529 values from 7646 to 9174) :      7 NAs (0.458%)"
+    ## [1] "  Bin 7 (1529 values from 9175 to 10703) :      3 NAs (0.196%)"
+    ## [1] "  Bin 8 (1529 values from 10704 to 12232) :      447 NAs (29.2%)"
+    ## [1] "  Bin 9 (1529 values from 12233 to 13761) :      19 NAs (1.24%)"
+    ## [1] "  Bin 10 (1529 values from 13762 to 15290) :      334 NAs (21.8%)"
+    ## [1] "  Bin 11 (1529 values from 15291 to 16819) :      5 NAs (0.327%)"
+    ## [1] "  Bin 12 (1529 values from 16820 to 18348) :      3 NAs (0.196%)"
+    ## [1] "  Bin 13 (1529 values from 18349 to 19877) :      3 NAs (0.196%)"
+    ## [1] "  Bin 14 (1529 values from 19878 to 21406) :      28 NAs (1.83%)"
+    ## [1] "  Bin 15 (1529 values from 21407 to 22935) :      3 NAs (0.196%)"
+    ## [1] "  Bin 16 (1529 values from 22936 to 24464) :      3 NAs (0.196%)"
+    ## [1] "  Bin 17 (1529 values from 24465 to 25993) :      5 NAs (0.327%)"
+    ## [1] "  Bin 18 (1529 values from 25994 to 27522) :      3 NAs (0.196%)"
+    ## [1] "  Bin 19 (1529 values from 27523 to 29051) :      10 NAs (0.654%)"
+    ## [1] "  Bin 20 (1529 values from 29052 to 30580) :      5 NAs (0.327%)"
+    ## [1] "  Bin 21 (1529 values from 30581 to 32109) :      125 NAs (8.18%)"
+    ## [1] "  Bin 22 (1522 values from 32110 to 33631) :      8 NAs (0.526%)"
+    ## [1] "-------------------------"
+    ## [1] "Longest NA gap (series of consecutive NAs)"
+    ## [1] "1994 in a row"
+    ## [1] "-------------------------"
+    ## [1] "Most frequent gap size (series of consecutive NA series)"
+    ## [1] "3 NA in a row (occuring 18 times)"
+    ## [1] "-------------------------"
+    ## [1] "Gap size accounting for most NAs"
+    ## [1] "1994 NA in a row (occuring 1 times, making up for overall 1994 NAs)"
+    ## [1] "-------------------------"
+    ## [1] "Overview NA series"
+    ## [1] "  2 NA in a row: 7 times"
+    ## [1] "  3 NA in a row: 18 times"
+    ## [1] "  4 NA in a row: 1 times"
+    ## [1] "  5 NA in a row: 2 times"
+    ## [1] "  7 NA in a row: 1 times"
+    ## [1] "  9 NA in a row: 1 times"
+    ## [1] "  14 NA in a row: 1 times"
+    ## [1] "  23 NA in a row: 1 times"
+    ## [1] "  78 NA in a row: 1 times"
+    ## [1] "  122 NA in a row: 1 times"
+    ## [1] "  296 NA in a row: 1 times"
+    ## [1] "  331 NA in a row: 1 times"
+    ## [1] "  369 NA in a row: 1 times"
+    ## [1] "  1056 NA in a row: 1 times"
+    ## [1] "  1994 NA in a row: 1 times"
+
 Impute the missing values using different imputation methods
 ============================================================
 

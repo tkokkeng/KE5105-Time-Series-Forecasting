@@ -89,6 +89,11 @@ plotNA.distributionBar(sde3_less_df$PWM_30min_avg, breaks = 20)
 plotNA.gapsize(sde3_less_df$PWM_30min_avg)
 ```
 
+## Missing data statistics
+```{r}
+statsNA(sde3_less_df$PWM_30min_avg, bins = 22)
+```
+
 # Impute the missing values using different imputation methods
 ```{r}
 #rownames(sde3_less_df) <- sde3_less_df$Pt_timeStamp
