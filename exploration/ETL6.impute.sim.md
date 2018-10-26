@@ -1,7 +1,7 @@
 KE5105 - Building Electrical Consumption Forecasting
 ================
 
-Extract, Transform and Load Data 5 - Data Imputation
+Extract, Transform and Load Data 6 - Data Imputation
 ====================================================
 
 Summary of Findings
@@ -234,6 +234,7 @@ missing <- create.missing(data = ts, rate = .1, seed = 729)
 ``` r
 removed_data = sde3_agg_df[17570:(17570+1485-1),]$PWM_30min_avg
 na_found <- FALSE
+temp <- NA
 for (i in 1:length(removed_data))
   if (!is.na(missing$data[i])) {
     temp <- removed_data[i]
@@ -318,32 +319,52 @@ head(PWM_notNA_df, 10)
     ## 23 19058 1380
 
 ``` r
-# Generate missing data for the 10 largest data blocks
-missing = vector("list", 10)
-for (i in 1:10) {
-  ts <- ts(sde3_agg_df[PWM_notNA_df$row[i]:(PWM_notNA_df$row[i]+PWM_notNA_df$size[i]-1),]$PWM_30min_avg)
-  missing[[i]] <- c(create.missing(data = ts, rate = .1, seed = 729), row = PWM_notNA_df$row[i], size = PWM_notNA_df$size[i])
-} 
+# Generate missing data for the 10 largest data blocks for a range of lambda values (# events per unit time) .1, .15, .2, .25 
+
+num_datasets = 10  # this is the number of time series data blocks we are extracting from the SDE-3 data to simulate the missing data 
+lambda_list = seq(10, 25, by=5)
+missing_list = vector("list", length(lambda_list))
+
+# For each lambda value, simulate the missing data.
+for (i in 1:length(lambda_list)) {
+  
+  missing = vector("list", num_datasets)
+  
+  # For each dataset, simulate the missing data.
+  for (j in 1:num_datasets) {
+    ts <- ts(sde3_agg_df[PWM_notNA_df$row[j]:(PWM_notNA_df$row[j]+PWM_notNA_df$size[j]-1),]$PWM_30min_avg)
+    missing[[j]] <- c(create.missing(data = ts, rate = lambda_list[i]/100, seed = 729), row = PWM_notNA_df$row[j], size = PWM_notNA_df$size[j])
+  }
+  missing_list[[i]] <- c(lambda=lambda_list[i]/100, missing = missing)
+}
 ```
 
 ``` r
 # Check the generated data for 1 block
-removed_data = sde3_agg_df[missing[[2]]$row:(missing[[2]]$row+missing[[2]]$size-1),]$PWM_30min_avg
+removed_data = sde3_agg_df[missing_list[[1]][[2]]$row:(missing_list[[1]][[2]]$row+missing_list[[1]][[2]]$size-1),]$PWM_30min_avg
 na_found <- FALSE
-for (i in 1:length(removed_data))
-  if (!is.na(missing[[2]]$data[i])) {
+temp <- NA
+for (i in 1:length(removed_data)) {
+  # Not a nan value
+  if (!is.na(missing_list[[1]][[2]]$data[i])) {
+    # Remember this value
     temp <- removed_data[i]
+    # Not in a nan series of values, change value to nan
     if (!na_found) {
       removed_data[i] <- NA
     }
+    # set to in a series of nan values
     na_found <- FALSE
   } else if (!na_found) {
+    # 1st nan in series found
     na_found = TRUE
+    # The previous value was set to nan, reset the previous value back to the remembered value
     removed_data[i-1] <- temp
   }
+}
 
 ts_removed_data = ts(removed_data)
-ts_data_with_missing = ts(missing[[2]]$data)
+ts_data_with_missing = ts(missing_list[[1]][[2]]$data)
 tsm <- cbind(ts_removed_data, ts_data_with_missing)
 plot.ts(tsm, plot.type = "single", col = c("red", "blue"), type = "o", pch = 19, cex = .4, ylab = "PWM")
 title("Aggregated PWM with Simulated Missing Data")
@@ -351,9 +372,148 @@ title("Aggregated PWM with Simulated Missing Data")
 
 ![](ETL6.impute.sim_files/figure-markdown_github/plot_sde3_missing_check-1.png)
 
+``` r
+for (i in missing_list) {
+  plotNA.gapsize(i[[2]]$data, main=paste("lambda =", toString(i[[1]])), byTotalNA = FALSE)
+  cat("Missing data statistics for lambda =", toString(i[[1]]), "\n")
+  statsNA(i[[2]]$data)
+  cat("\n")
+}
+```
+
+![](ETL6.impute.sim_files/figure-markdown_github/all_distribution_gapsize-1.png)
+
+    ## Missing data statistics for lambda = 0.1 
+    ## [1] "Length of time series:"
+    ## [1] 1485
+    ## [1] "-------------------------"
+    ## [1] "Number of Missing Values:"
+    ## [1] 137
+    ## [1] "-------------------------"
+    ## [1] "Percentage of Missing Values:"
+    ## [1] "9.23%"
+    ## [1] "-------------------------"
+    ## [1] "Stats for Bins"
+    ## [1] "  Bin 1 (372 values from 1 to 372) :      37 NAs (9.95%)"
+    ## [1] "  Bin 2 (372 values from 373 to 744) :      29 NAs (7.8%)"
+    ## [1] "  Bin 3 (372 values from 745 to 1116) :      40 NAs (10.8%)"
+    ## [1] "  Bin 4 (369 values from 1117 to 1485) :      31 NAs (8.4%)"
+    ## [1] "-------------------------"
+    ## [1] "Longest NA gap (series of consecutive NAs)"
+    ## [1] "3 in a row"
+    ## [1] "-------------------------"
+    ## [1] "Most frequent gap size (series of consecutive NA series)"
+    ## [1] "1 NA in a row (occuring 107 times)"
+    ## [1] "-------------------------"
+    ## [1] "Gap size accounting for most NAs"
+    ## [1] "1 NA in a row (occuring 107 times, making up for overall 107 NAs)"
+    ## [1] "-------------------------"
+    ## [1] "Overview NA series"
+    ## [1] "  1 NA in a row: 107 times"
+    ## [1] "  2 NA in a row: 12 times"
+    ## [1] "  3 NA in a row: 2 times"
+
+![](ETL6.impute.sim_files/figure-markdown_github/all_distribution_gapsize-2.png)
+
+    ## Missing data statistics for lambda = 0.15 
+    ## [1] "Length of time series:"
+    ## [1] 1485
+    ## [1] "-------------------------"
+    ## [1] "Number of Missing Values:"
+    ## [1] 198
+    ## [1] "-------------------------"
+    ## [1] "Percentage of Missing Values:"
+    ## [1] "13.3%"
+    ## [1] "-------------------------"
+    ## [1] "Stats for Bins"
+    ## [1] "  Bin 1 (372 values from 1 to 372) :      55 NAs (14.8%)"
+    ## [1] "  Bin 2 (372 values from 373 to 744) :      49 NAs (13.2%)"
+    ## [1] "  Bin 3 (372 values from 745 to 1116) :      46 NAs (12.4%)"
+    ## [1] "  Bin 4 (369 values from 1117 to 1485) :      48 NAs (13%)"
+    ## [1] "-------------------------"
+    ## [1] "Longest NA gap (series of consecutive NAs)"
+    ## [1] "3 in a row"
+    ## [1] "-------------------------"
+    ## [1] "Most frequent gap size (series of consecutive NA series)"
+    ## [1] "1 NA in a row (occuring 122 times)"
+    ## [1] "-------------------------"
+    ## [1] "Gap size accounting for most NAs"
+    ## [1] "1 NA in a row (occuring 122 times, making up for overall 122 NAs)"
+    ## [1] "-------------------------"
+    ## [1] "Overview NA series"
+    ## [1] "  1 NA in a row: 122 times"
+    ## [1] "  2 NA in a row: 32 times"
+    ## [1] "  3 NA in a row: 4 times"
+
+![](ETL6.impute.sim_files/figure-markdown_github/all_distribution_gapsize-3.png)
+
+    ## Missing data statistics for lambda = 0.2 
+    ## [1] "Length of time series:"
+    ## [1] 1485
+    ## [1] "-------------------------"
+    ## [1] "Number of Missing Values:"
+    ## [1] 262
+    ## [1] "-------------------------"
+    ## [1] "Percentage of Missing Values:"
+    ## [1] "17.6%"
+    ## [1] "-------------------------"
+    ## [1] "Stats for Bins"
+    ## [1] "  Bin 1 (372 values from 1 to 372) :      65 NAs (17.5%)"
+    ## [1] "  Bin 2 (372 values from 373 to 744) :      68 NAs (18.3%)"
+    ## [1] "  Bin 3 (372 values from 745 to 1116) :      59 NAs (15.9%)"
+    ## [1] "  Bin 4 (369 values from 1117 to 1485) :      70 NAs (19%)"
+    ## [1] "-------------------------"
+    ## [1] "Longest NA gap (series of consecutive NAs)"
+    ## [1] "4 in a row"
+    ## [1] "-------------------------"
+    ## [1] "Most frequent gap size (series of consecutive NA series)"
+    ## [1] "1 NA in a row (occuring 160 times)"
+    ## [1] "-------------------------"
+    ## [1] "Gap size accounting for most NAs"
+    ## [1] "1 NA in a row (occuring 160 times, making up for overall 160 NAs)"
+    ## [1] "-------------------------"
+    ## [1] "Overview NA series"
+    ## [1] "  1 NA in a row: 160 times"
+    ## [1] "  2 NA in a row: 36 times"
+    ## [1] "  3 NA in a row: 6 times"
+    ## [1] "  4 NA in a row: 3 times"
+
+![](ETL6.impute.sim_files/figure-markdown_github/all_distribution_gapsize-4.png)
+
+    ## Missing data statistics for lambda = 0.25 
+    ## [1] "Length of time series:"
+    ## [1] 1485
+    ## [1] "-------------------------"
+    ## [1] "Number of Missing Values:"
+    ## [1] 325
+    ## [1] "-------------------------"
+    ## [1] "Percentage of Missing Values:"
+    ## [1] "21.9%"
+    ## [1] "-------------------------"
+    ## [1] "Stats for Bins"
+    ## [1] "  Bin 1 (372 values from 1 to 372) :      80 NAs (21.5%)"
+    ## [1] "  Bin 2 (372 values from 373 to 744) :      75 NAs (20.2%)"
+    ## [1] "  Bin 3 (372 values from 745 to 1116) :      87 NAs (23.4%)"
+    ## [1] "  Bin 4 (369 values from 1117 to 1485) :      83 NAs (22.5%)"
+    ## [1] "-------------------------"
+    ## [1] "Longest NA gap (series of consecutive NAs)"
+    ## [1] "4 in a row"
+    ## [1] "-------------------------"
+    ## [1] "Most frequent gap size (series of consecutive NA series)"
+    ## [1] "1 NA in a row (occuring 176 times)"
+    ## [1] "-------------------------"
+    ## [1] "Gap size accounting for most NAs"
+    ## [1] "1 NA in a row (occuring 176 times, making up for overall 176 NAs)"
+    ## [1] "-------------------------"
+    ## [1] "Overview NA series"
+    ## [1] "  1 NA in a row: 176 times"
+    ## [1] "  2 NA in a row: 47 times"
+    ## [1] "  3 NA in a row: 13 times"
+    ## [1] "  4 NA in a row: 4 times"
+
 Save the simulated missing data to file.
 ----------------------------------------
 
 ``` r
-saveRDS(missing, "sim_missing_data.rds")
+saveRDS(missing_list, "sim_missing_data.rds")
 ```
