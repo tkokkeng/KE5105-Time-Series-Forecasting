@@ -6,8 +6,26 @@ output: github_document
 # Extract, Transform and Load Data 7 - Data Imputation
 
 # Summary of Findings
-* to be filled in
-    * to be filled in
+* Data imputation was performed on the 10 test periods of SDE-3 data with simulated missing completely at random (MCAR) data using :
+    * structural model with Kalman smoothing
+    * arima model with Kalman smoothing
+    * spline interpolation
+    * exponential moving average (k=4)
+* Outliers in the rmse were found in arima for lambda = 0.15
+* 1-way anova test found
+    * for lambda = 0.1, no significant differences
+    * lambda = 0.15 show significant differences (arima excluded)
+    * lambda = 0.2, 0.25 show significant differences
+* Multiple pairwise t-tests found the following relationships between rmse:
+    * for lambda = 0.1, no significant differences
+    * for lambda = 0.2,
+        * spline, ma > arima
+        * spline, ma > struc
+    * for lambda = 0.25
+        * spline > ma, arima, struc
+        * ma > arima, struct
+    * for lambda = 0.15, 
+        * spline > struc
   
 # Load libraries
 ```{r}
@@ -167,19 +185,32 @@ head(results_long_df)
 ```
 
 
-```{r}
-for (i in list(.1, .2, .25)) {
+```{r boxplots}
+for (i in list(.1, .15, .2, .25)) {
   plot(RMSE ~ method, data = results_long_df[results_long_df$lambda == i, ], main = paste("lambda =", toString(i)))
 }
 ```
 
 
 ```{r}
-res = aov(RMSE ~ method, data = results_long_df[results_long_df$lambda == .1, ])
-summary(res)
+for (i in list(.1, .2, .25)) {
+  cat("lambda = ", i, "\n")
+  res = aov(RMSE ~ method, data = results_long_df[results_long_df$lambda == i, ])
+  print(summary(res))
+  cat("--------------------------------------------------------------------------------------------------------------\n")
+}
 ```
 
-The anova test found **insufficient evidence** to show that the differences are significant.
+For lambda = .1, the anova test found **insufficient evidence** to show that the differences are significant.
+for lambda = .2, .25, the anova tests show **significant** differences.
+
+For lambda = .15, exclude arima from the anova tests because it has outliers in the rmse.
+```{r}
+res = aov(RMSE ~ method, data = results_long_df[(results_long_df$lambda == .15) & (results_long_df$method != 'arima') , ])
+print(summary(res))
+```
+
+The anova test for lambda = .15 show **significant** differences between struc, spline and ma.
 
 ### Pairwise t-test for lambda .1, .2, .25 (exclude .15 due to outliers in ARIMA)
 
@@ -192,6 +223,8 @@ for lambda = 0.1, no significant differences.
 for lambda = 0.2, spline > arima, ma > arima, ma > struc, spline > struc
 for lambda = 0.25, spline > ma, spline > arima, ma > arima, ma > struc, spline > struc
 
+for lambda = .15, spline > struc (arima excluded from test)
+
 ```{r}
 for (i in list(.1, .2, .25)) {
   cat("lambda = ", i, "\n")
@@ -200,5 +233,12 @@ for (i in list(.1, .2, .25)) {
                         p.adjust = "bonferroni"))
   cat("--------------------------------------------------------------------------------------------------------------\n")
 }
+```
+
+for lambda = .15, exclude arima from test
+```{r}
+print(pairwise.t.test(results_long_df[(results_long_df$lambda == .15) & (results_long_df$method != "arima"),]$RMSE,
+                      results_long_df[(results_long_df$lambda == .15) & (results_long_df$method != "arima"),]$method,
+                      p.adjust = "bonferroni"))
 ```
 
