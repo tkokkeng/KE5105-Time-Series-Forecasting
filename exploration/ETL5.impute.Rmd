@@ -81,12 +81,12 @@ plotNA.distribution(sde3_less_df$PWM_30min_avg, cex=.1)
 
 ## Plot the distribution of the missing data
 ```{r}
-plotNA.distributionBar(sde3_less_df$PWM_30min_avg, breaks = 20)
+plotNA.distributionBar(sde3_less_df$PWM_30min_avg, breaks = 22)
 ```
 
 ## Plot the distribution of the missing data by gap size
-```{r}
-plotNA.gapsize(sde3_less_df$PWM_30min_avg)
+```{r, fig.height = 4, fig.width = 10}
+plotNA.gapsize(sde3_less_df$PWM_30min_avg, byTotalNA = TRUE)
 ```
 
 ## Missing data statistics

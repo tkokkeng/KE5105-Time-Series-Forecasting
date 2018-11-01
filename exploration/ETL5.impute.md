@@ -148,7 +148,7 @@ Plot the distribution of the missing data
 -----------------------------------------
 
 ``` r
-plotNA.distributionBar(sde3_less_df$PWM_30min_avg, breaks = 20)
+plotNA.distributionBar(sde3_less_df$PWM_30min_avg, breaks = 22)
 ```
 
 ![](ETL5.impute_files/figure-markdown_github/unnamed-chunk-5-1.png)
@@ -157,7 +157,7 @@ Plot the distribution of the missing data by gap size
 -----------------------------------------------------
 
 ``` r
-plotNA.gapsize(sde3_less_df$PWM_30min_avg)
+plotNA.gapsize(sde3_less_df$PWM_30min_avg, byTotalNA = TRUE)
 ```
 
 ![](ETL5.impute_files/figure-markdown_github/unnamed-chunk-6-1.png)

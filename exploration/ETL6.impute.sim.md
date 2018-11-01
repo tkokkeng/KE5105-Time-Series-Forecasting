@@ -292,7 +292,7 @@ Plot the distribution of the missing data by gap size
 -----------------------------------------------------
 
 ``` r
-plotNA.gapsize(missing$data)
+plotNA.gapsize(missing$data, byTotalNA = TRUE)
 ```
 
 ![](ETL6.impute.sim_files/figure-markdown_github/distribution_NA_gapsize-1.png)
@@ -374,7 +374,7 @@ title("Aggregated PWM with Simulated Missing Data")
 
 ``` r
 for (i in missing_list) {
-  plotNA.gapsize(i[[2]]$data, main=paste("lambda =", toString(i[[1]])), byTotalNA = FALSE)
+  plotNA.gapsize(i[[2]]$data, main=paste("lambda =", toString(i[[1]])), byTotalNA = TRUE)
   cat("Missing data statistics for lambda =", toString(i[[1]]), "\n")
   statsNA(i[[2]]$data)
   cat("\n")
