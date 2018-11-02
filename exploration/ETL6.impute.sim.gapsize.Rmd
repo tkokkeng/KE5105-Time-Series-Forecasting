@@ -1,0 +1,288 @@
+---
+title: "KE5105 - Building Electrical Consumption Forecasting"
+output: github_document
+---
+# Extract, Transform and Load Data 6 - Data Imputation
+## Simulate Missing Data by Gap Size
+
+# Summary of Findings
+* Simulated missing data for a range of gap sizes and lambda
+
+# Load libraries
+```{r}
+library(ggplot2)
+library(xts)
+library(imputeTS)
+```
+
+# Load data
+```{r load_data, results='hide'}
+sde3_agg_df <- read.csv("/home/tkokkeng/Documents/KE5105/ETL/source/test_data/SDE-3.agg.csv", header = TRUE, stringsAsFactors = FALSE)
+head(sde3_agg_df)
+```
+
+## Convert the Pt_timeStamp strings to POSIX time
+```{r convert_data, results='hide'}
+sde3_agg_df$Pt_timeStamp <- strptime(sde3_agg_df$Pt_timeStamp, format = "%Y-%m-%d %H:%M:%S", tz="GMT")
+head(sde3_agg_df)
+```
+
+## Look for the largest contiguous subset of non-NA data
+```{r}
+PWM_notNA_df <- data.frame(sde3_agg_df$PWM_30min_avg)
+head(PWM_notNA_df)
+```
+
+### Get a cumulative count of the NAs.
+```{r}
+PWM_notNA_df$na_cumsum = cumsum(is.na(PWM_notNA_df$sde3_agg_df.PWM_30min_avg))
+head(PWM_notNA_df)
+```
+
+### Remove the rows with NAs, leaving only the data rows. Each consective data row has a unique cumulative count.
+```{r}
+PWM_notNA_df <- PWM_notNA_df[!is.na(PWM_notNA_df$sde3_agg_df.PWM_30min_avg),]
+head(PWM_notNA_df)
+```
+
+### Group the data rows by their cumulative count and get the frequency which is the size of each contiguous block of data. 
+```{r}
+PWM_notNA_df <- as.data.frame(table(PWM_notNA_df$na_cumsum), stringsAsFactors = FALSE)
+colnames(PWM_notNA_df) <- c("row", "size")
+PWM_notNA_df$row = as.integer(PWM_notNA_df$row)
+head(PWM_notNA_df)
+```
+
+### Offset the row numbers to get the correct row index. 
+```{r}
+PWM_notNA_df[2:nrow(PWM_notNA_df), c("row")] <- tail(PWM_notNA_df$row, -1) + head(cumsum(PWM_notNA_df$size), -1) + 1
+head(PWM_notNA_df)
+```
+
+### Find the biggest contiguous data blocks. 
+```{r}
+PWM_notNA_df[which(PWM_notNA_df$size == max(PWM_notNA_df$size)),]
+```
+
+Plot the data.
+```{r}
+ts <- xts(sde3_agg_df[17570:(17570+1485-1),]$PWM_30min_avg, sde3_agg_df[17570:(17570+1485-1),]$Pt_timeStamp)
+```
+
+## Plot the time series data for a period without missing data
+```{r plot_sde3, fig.height = 3, fig.width = 10}
+autoplot(ts) +
+  ylab("Aggregated PWM") +
+  xlab("Time") +
+  ggtitle("SDE-3 Aggregated PWM for a Period without Missing Data")
+```
+
+
+```{r}
+which(is.na(sde3_agg_df[17570:(17570+1485),]$PWM_30min_avg))
+```
+
+## Simulate missing data using an exponential distribution
+```{r}
+#' Code of the missing data simulation function
+#' @param data - univariate time series
+#' @param rate - lambda value for exponential distribution (# events per unit time)
+#' @param seed - random seed used for the function
+
+create.missing <- function(data, rate, gapsize, seed=NULL) {
+
+    ## Only for time series
+  if (class(data) != "ts") {
+    stop("Provided data is not a time series.")
+  }
+
+  ## No missing data (pass-through)
+  if (rate == 0) {
+    return(data)
+  }
+
+  ## Save original parameters
+  t <- time(data)
+  f <- frequency(data)
+  
+  ##Setting of random seed
+  if (!is.null(seed))
+    set.seed(seed)
+  
+  ## Initialize index
+  a <- 0
+  
+  ## Indices of removed entries
+  tempDelete <- numeric(0)
+  while (a < length(data)) {
+    ## 'ceiling' is to avoid possible zeros
+    a <- ceiling(a + rexp(1, rate))
+    if ( a <= length(data) ) {
+      ## Set all data from a to a+gapsize to NA
+      for (i in 0:(gapsize-1)) {
+        a <- a + 1
+        if ( a <= length(data) ) {
+          data[a] <- NA
+          tempDelete <- c(tempDelete, a)
+        } else {
+          break
+        }
+      }
+    }
+  }
+  return(list(data=data, na.ind=tempDelete))
+}
+```
+
+#### Exponential Distribution (https://en.wikipedia.org/wiki/Exponential_distribution)
+![Exponential Distribution](./images/360px-Exponential_pdf.svg.png)
+
+### Simulate missing data for 1 contiguous data block
+```{r}
+ts <- ts(sde3_agg_df[17570:(17570+1485-1),]$PWM_30min_avg)
+missing <- create.missing(data = ts, rate = .05, gapsize=10, seed = 729)
+```
+
+### Prepare the simulated data for plotting
+```{r}
+removed_data = sde3_agg_df[17570:(17570+1485-1),]$PWM_30min_avg
+na_found <- FALSE
+temp <- NA
+for (i in 1:length(removed_data))
+  if (!is.na(missing$data[i])) {
+    temp <- removed_data[i]
+    if (!na_found) {
+      removed_data[i] <- NA
+    }
+    na_found <- FALSE
+  } else if (!na_found) {
+    na_found = TRUE
+    removed_data[i-1] <- temp
+  }
+```
+
+### PLot the simulated missing data
+```{r plot_sde3_missing, fig.height = 4, fig.width = 10}
+ts_removed_data = ts(removed_data)
+ts_data_with_missing = ts(missing$data)
+tsm <- cbind(ts_removed_data, ts_data_with_missing)
+plot.ts(tsm, plot.type = "single", col = c("red", "blue"), type = "o", pch = 19, cex = .4, ylab = "PWM")
+title("Aggregated PWM with Simulated Missing Data")
+```
+
+
+```{r plot_sde3_missing_zoom, fig.height = 4, fig.width = 10}
+plot.ts(tsm[100:250,], plot.type = "single", col = c("red", "blue"), type = "o", pch = 19, cex = .4, ylab = "PWM")
+title("Aggregated PWM with Simulated Missing Data")
+```
+
+
+```{r plot_sde3_missing_multiple, fig.height = 7, fig.width = 10}
+ts_removed_data = ts(removed_data)
+ts_data_with_missing = ts(missing$data)
+tsm <- cbind(ts_removed_data, ts_data_with_missing)
+plot.ts(tsm, plot.type = "multiple", type = "o", pch = 19, cex = .4, main = "Aggregated PWM with Simulated Missing Data")
+#title("Aggregated PWM with Simulated Missing Data")
+```
+
+### Distribution of simulated missing data
+```{r distribution_NA}
+plotNA.distributionBar(missing$data, breaks = 30)
+```
+
+## Plot the distribution of the missing data by gap size
+```{r distribution_NA_gapsize}
+plotNA.gapsize(missing$data, byTotalNA = TRUE)
+```
+
+
+```{r}
+statsNA(missing$data, bins = 30)
+```
+
+## Create the simulated missing data for a set of contiguous data blocks.
+```{r}
+# Sort the contiguous data blocks by size.
+PWM_notNA_df <- PWM_notNA_df[order(-PWM_notNA_df$size),]
+head(PWM_notNA_df, 10)
+```
+
+
+```{r}
+# Generate missing data for the 10 largest data blocks for a range of lambda values (# events per unit time) .1, .15, .2, .25 
+
+num_datasets = 10  # this is the number of time series data blocks we are extracting from the SDE-3 data to simulate the missing data 
+lambda_list = seq(5, 25, by=5)
+gap_size_list = c(2, 3, 4, 5, 7, 9, 14, 23)
+missing_list = vector("list", length(lambda_list) * length(gap_size_list))
+
+# For each lambda value
+for (i in 1:length(lambda_list)) {
+  
+  # For each gap size, 
+  for (j in 1:length(gap_size_list)) {
+    
+    # List of time series data with simulated missing data for 1 value of lambda and 1 value of gap size 
+    missing = vector("list", num_datasets)
+  
+    # For each dataset, simulate the missing data.
+    for (k in 1:num_datasets) {
+      
+      ts <- ts(sde3_agg_df[PWM_notNA_df$row[k]:(PWM_notNA_df$row[k]+PWM_notNA_df$size[k]-1),]$PWM_30min_avg)
+      missing[[k]] <- c(create.missing(data = ts, rate = lambda_list[i]/100, gap_size_list[j], seed = 729),
+                        row = PWM_notNA_df$row[k],
+                        size = PWM_notNA_df$size[k])
+    }
+    # Add to list of simulated missing data
+    missing_list[[length(gap_size_list) * (i - 1) + j]] <- c(lambda=lambda_list[i]/100, missing = missing, gapsize = gap_size_list[j])
+  }
+}
+```
+
+
+```{r plot_sde3_missing_check, fig.height = 4, fig.width = 10}
+# Check the generated data for 1 block
+removed_data = sde3_agg_df[missing_list[[8]][[2]]$row:(missing_list[[8]][[2]]$row+missing_list[[8]][[2]]$size-1),]$PWM_30min_avg
+na_found <- FALSE
+temp <- NA
+for (i in 1:length(removed_data)) {
+  # Not a nan value
+  if (!is.na(missing_list[[8]][[2]]$data[i])) {
+    # Remember this value
+    temp <- removed_data[i]
+    # Not in a nan series of values, change value to nan
+    if (!na_found) {
+      removed_data[i] <- NA
+    }
+    # set to in a series of nan values
+    na_found <- FALSE
+  } else if (!na_found) {
+    # 1st nan in series found
+    na_found = TRUE
+    # The previous value was set to nan, reset the previous value back to the remembered value
+    removed_data[i-1] <- temp
+  }
+}
+
+ts_removed_data = ts(removed_data)
+ts_data_with_missing = ts(missing_list[[8]][[2]]$data)
+tsm <- cbind(ts_removed_data, ts_data_with_missing)
+plot.ts(tsm, plot.type = "single", col = c("red", "blue"), type = "o", pch = 19, cex = .4, ylab = "PWM")
+title("Aggregated PWM with Simulated Missing Data")
+```
+
+
+```{r all_distribution_gapsize}
+for (i in missing_list) {
+  plotNA.gapsize(i[[2]]$data, main=paste("lambda =", toString(i[[1]]), " gapsize =", toString(tail(i, n = 1)[[1]])), byTotalNA = TRUE)
+  cat("Missing data statistics for lambda =", toString(i[[1]]), " gapsize =", toString(tail(i, n = 1)[[1]]), "\n")
+  statsNA(i[[2]]$data)
+  cat("\n")
+}
+```
+
+## Save the simulated missing data to file.
+```{r}
+saveRDS(missing_list, "sim_missing_data_gapsize.rds")
+```
+
