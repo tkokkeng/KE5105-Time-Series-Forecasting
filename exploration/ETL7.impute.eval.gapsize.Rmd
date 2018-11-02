@@ -1,0 +1,124 @@
+---
+title: "KE5105 - Building Electrical Consumption Forecasting"
+output: github_document
+---
+
+# Extract, Transform and Load Data 7 - Data Imputation
+### Gap Size Analysis
+
+# Summary of Findings
+* RMSE increases with gap size and amount of missing data.
+  
+# Load libraries
+```{r}
+library(ggplot2)
+library(reshape2)
+library(xts)
+library(imputeTS)
+```
+
+# Load data
+```{r load_data, results='hide'}
+# SDE-3 time series data
+sde3_agg_df <- read.csv("/home/tkokkeng/Documents/KE5105/ETL/source/test_data/SDE-3.agg.csv", header = TRUE, stringsAsFactors = FALSE)
+
+# A list of 10 time series datasets with simulated missing data
+missing_list <- readRDS("sim_missing_data_gapsize.rds")
+```
+
+
+```{r}
+length(missing_list)
+```
+
+
+```{r}
+num_lambdas_gapsize = length(missing_list)
+num_datasets = length(missing_list[[1]])-2  # each list has lambda, missing1, ..., missing<n>, gapsize
+
+results = vector('list', num_lambdas_gapsize * num_datasets) 
+idx = 1
+for (i in missing_list) {
+
+  for (j in 1:num_datasets) {
+  # test data
+  data_with_na = i[[j+1]]$data
+  data_true = sde3_agg_df[i[[j+1]]$row:(i[[j+1]]$row+i[[j+1]]$size-1), ]$PWM_30min_avg
+  na_true = data_true[i[[j+1]]$na.ind]
+  
+  # Impute the missing values using structural model and Kalman smoothing
+  imp_struct <- na.kalman(data_with_na)
+  # Impute the missing values using ARIMA model and Kalman smoothing
+  imp_arima <- na.kalman(data_with_na, model = "auto.arima")
+  # Impute the missing values using spline interpolation
+  imp_spline <- na.interpolation(data_with_na, option = "spline")
+  # Impute the missing values using moving average
+  imp_ma <- na.ma(data_with_na, k=4, weighting="exponential")  
+
+  # Extract all the imputed na values
+  na_imp_struct = imp_struct[i[[j+1]]$na.ind]
+  na_imp_arima = imp_arima[i[[j+1]]$na.ind]
+  na_imp_spline = imp_spline[i[[j+1]]$na.ind]
+  na_imp_ma = imp_ma[i[[j+1]]$na.ind]
+  
+  # compute rmse
+  rmse_struct = sqrt(mean((na_imp_struct - na_true)^2))
+  rmse_arima = sqrt(mean((na_imp_arima - na_true)^2))
+  rmse_spline = sqrt(mean((na_imp_spline - na_true)^2))
+  rmse_ma = sqrt(mean((na_imp_ma - na_true)^2))
+  
+  #Update results
+  results[[idx]] <- c(i$lambda,
+                      i$gapsize, length(i[[j+1]]$na.ind) / length(i[[j+1]]$data),
+                      rmse_struct, rmse_arima, rmse_spline, rmse_ma)
+  idx = idx + 1
+  }
+}  
+```
+
+
+```{r}
+results_df = as.data.frame(matrix(unlist(results), nrow = length(results), byrow = TRUE))
+colnames(results_df) = c("lambda", "gapsize", "na_percent", "struc", "arima", "spline", "ma")
+results_df
+```
+
+Save results to file. 
+```{r}
+write.csv(results_df, file = "results_gapsize.csv", row.names = FALSE)
+```
+
+
+```{r}
+agg_df <- aggregate(results_df[, c("na_percent", "struc", "arima", "spline", "ma")],
+                    list(lambda = results_df$lambda, gapsize = results_df$gapsize), mean)
+agg_df
+```
+
+
+```{r}
+agg_long_df <- melt(agg_df, id.vars = c("lambda", "gapsize", "na_percent"), variable.name = "method")
+agg_long_df
+```
+
+
+```{r rmse_gapsize_plot, fig.height = 10, fig.width = 7}
+ggplot(agg_long_df, aes(x=gapsize, y=value, group=method)) +
+  geom_line(aes(color=method)) +
+  geom_point(aes(color=method, size=na_percent), shape = 1) +
+  scale_size_continuous(range = c(.2,10), trans = "exp") +
+  facet_grid(lambda ~ .) +
+  ggtitle("Imputation RMSE by Gap Size and Lambda")
+```
+
+
+```{r rmse_na_percent_plot, fig.height = 10, fig.width = 7}
+ggplot(agg_long_df, aes(x=na_percent, y=value, group=method)) +
+  geom_line(aes(color=method)) +
+  geom_point(aes(color=method, size=gapsize), shape = 1) +
+  scale_size_continuous(range = c(1,10)) +
+  facet_grid(lambda ~ .) +
+  ggtitle("Imputation RMSE by NA percentage and Lambda")
+```
+
+
