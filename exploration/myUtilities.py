@@ -7,14 +7,23 @@ import re
 import datetime
 import math
 import matplotlib.pyplot as plt
+import numpy as np
+from pandas.tseries.offsets import MonthBegin, MonthEnd
+import json
 
 ######################################################################################################################
 # Private Parameters
 ######################################################################################################################
+
+# directories
 _RAW_DATA_PATH_ = os.path.join('source', '105 building data')
 _COMBINED_DATA_PATH_ = os.path.join('source', 'combined_bldg_data')
 _PROCESSED_DATA_PATH_ = os.path.join('source', 'processed_bldg_data')
+_MISC_DATA_PATH_ = os.path.join('source', 'other_data')
+
+# files
 _MSG_LOG_FILE_ = os.path.join('source', 'log', 'logfile.txt')
+_BLDG_FORMULAE_FILE_ = os.path.join(_MISC_DATA_PATH_, 'bldg-formulae.json')
 
 _DATA_TYPE_TO_PATH_ = {
     'raw': _RAW_DATA_PATH_,
@@ -37,11 +46,8 @@ _MONTH_TO_NUM_ = {
     'Dec': 12
 }
 
-_PWM_FORMULA_ = {
-    'SDE-3': [['PWM-SDE3 IC1', 'PWM-SDE3 IC2'],
-              ['PWM-SDE3 MCC (AC)', 'PWM-CELC IC1', 'PWM-CELC IC2', 'PWM-SDE1', 'PWM-SDE2 SSB', 'PWM-SDE2 AC',
-               'PWM-SDE3 Ext', 'PWM-Street Light']]
-}
+with open(_BLDG_FORMULAE_FILE_) as json_file:
+    _PWM_FORMULA_ = json.load(json_file)
 
 
 ######################################################################################################################
@@ -81,37 +87,74 @@ def load_data_by_bldg(bldg_name_list, type, data_path=None):
             bldg_df_list = _load_data_by_bldg_(bldg_name_list[0])
         else:
             bldg_df_list = _load_data_by_bldg_(bldg_name_list[0], data_path=data_path)
+    # type is 'combined' or 'processed'
     else:
-        for i in bldg_name_list:
-            if data_path==None:
-                df = pd.read_csv(os.path.join(_DATA_TYPE_TO_PATH_[type], i + '.csv'), index_col=0, parse_dates=True)
+        # load all files
+        if bldg_name_list == 'all':
+            files = os.listdir('combined_bldg_data')
+            if data_path == None:
+                files = [ os.path.join(_DATA_TYPE_TO_PATH_[type], files[i]) for i in files ]
             else:
-                df = pd.read_csv(os.path.join(data_path, i + '.csv'), index_col=0, parse_dates=True)
-            df.sort_index(inplace=True)
-            bldg_df_list.append([i, df])
+                files = [ os.path.join(data_path, files[i]) for i in files ]
+            for i in files:
+                df = pd.read_csv(i, index_col=0, parse_dates=True)
+                df.sort_index(inplace=True)
+                bldg_name = i.split(os.path.sep)[-1].split('.')[0]
+                bldg_df_list.append([bldg_name, df])
+        # load files in specified building name list
+        else:
+            for i in bldg_name_list:
+                if data_path==None:
+                    df = pd.read_csv(os.path.join(_DATA_TYPE_TO_PATH_[type], i + '.csv'), index_col=0, parse_dates=True)
+                else:
+                    df = pd.read_csv(os.path.join(data_path, i + '.csv'), index_col=0, parse_dates=True)
+                df.sort_index(inplace=True)
+                bldg_df_list.append([i, df])
 
     return bldg_df_list
 
 
 # This function aggregates the raw time series PWM data for a building in the path according to the building's PWM
 # formula.
+# name is a list of building names or 'all'
+# errors are logged to _MSG_LOG_FILE_
 # **** This needs to be fixed. *****
-def process_PWM_data_by_bldg(name, input_data_path=_RAW_DATA_PATH_, output_data_path=_PROCESSED_DATA_PATH_):
+def process_PWM_data_by_bldg(bldg_name_list, input_data_path=_COMBINED_DATA_PATH_, output_data_path=_PROCESSED_DATA_PATH_):
 
     result = False
-    bldg_data_df = _load_data_by_bldg_(name, input_data_path)
+    bldg_df_list = load_data_by_bldg(bldg_name_list, 'combined', input_data_path)
 
-    try:
-        add_idx = list(map(lambda x: bldg_data_df.columns.get_loc(x), _PWM_FORMULA_[name][0]))
-        subtract_idx = list(map(lambda x: bldg_data_df.columns.get_loc(x), _PWM_FORMULA_[name][1]))
-    except KeyError:
-        pass
-    else:
-        bldg_data_df['PWM_1'] = bldg_data_df.iloc[:, add_idx].sum(axis=1)
-        bldg_data_df['PWM_2'] = bldg_data_df.iloc[:, subtract_idx].sum(axis=1)
-        bldg_data_df['PWM_Agg'] = bldg_data_df['PWM_1'] + bldg_data_df['PWM_2']
-        bldg_data_df.to_csv(os.path.join(output_data_path, name + '.csv'))
-        result = True
+    for name, df in bldg_df_list:
+
+        # Reindex the cumulative data to add any missing time periods. This is needed for differencing.
+        start = df.index.min() - MonthBegin(n=1)  # set to first day of month
+        end = df.index.max() + MonthEnd(n=1)  # set to last day of month
+        end = end.replace(hour=23, minute=30)  # set time to 23h30
+        df = reindex_ts_df(df, start, end)
+
+        # Difference the cumulative data to get the 30min data.
+        for i in df.columns:
+            # if value is zero or difference is negative, set to NaN
+            df[i + '_30min_avg'] = df[i].rolling(2).apply(
+                lambda x: (x[1] - x[0]) if ((x[0] > 0) and (x[1] >= x[0])) else np.NaN)
+
+        # Calculate the aggregate PWM according to building formula.
+        try:
+            add_idx = list(map(lambda x: df.columns.get_loc(x), _PWM_FORMULA_[name][0]))
+            subtract_idx = list(map(lambda x: df.columns.get_loc(x), _PWM_FORMULA_[name][1]))
+        except KeyError:
+            _write_msg_log_('Formula error in %s' % name, log=_MSG_LOG_FILE_)
+        else:
+            df['PWM_sumadd'] = df.iloc[:, add_idx].apply(lambda x: np.nan if x.isnull().any() else x.sum(), axis=1)
+            if subtract_idx:
+                df['PWM_sumsubtract'] = df.iloc[:, subtract_idx].apply(lambda x: np.nan if x.isnull().any() else x.sum(),
+                                                                       axis=1)
+                df['PWM_30min_avg'] = df['PWM_sumadd'] - df['PWM_sumsubtract']
+            else:
+                # no terms to subtract in formula
+                df['PWM_30min_avg'] = df['PWM_sumadd']
+            df.to_csv(os.path.join(output_data_path, name + '.csv'))
+            result = True
 
     return result
 
