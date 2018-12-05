@@ -1,0 +1,456 @@
+---
+title: "KE5105 - Building Electrical Consumption Forecasting"
+output: github_document
+---
+# Extract, Transform and Load Data 5 - Data Imputation MD1 & MD6
+
+# Summary of Findings
+* Missing data occurs periodically at the end of each month.
+* All methods perform similarly for small gaps.
+* Test for missing completely at random (MCAR) patterns show some evidence that the missing data is not MCAR in MD1.
+
+```{r global_options, include=FALSE}
+knitr::opts_chunk$set(cache = TRUE)
+```
+
+# Load libraries
+```{r}
+library(ggplot2)
+library(xts)
+library(imputeTS)
+library(MissMech)
+```
+
+# MD1
+# Load data
+```{r load_data, results='hide'}
+md1_agg_df <- read.csv("/home/tkokkeng/Documents/KE5105/ETL/source/processed_bldg_data/MD1.csv", header = TRUE, stringsAsFactors = FALSE)
+head(md1_agg_df)
+```
+
+## Convert the Pt_timeStamp strings to POSIX time
+```{r convert_data, results='hide'}
+md1_agg_df$Pt_timeStamp <- strptime(md1_agg_df$Pt_timeStamp, format = "%Y-%m-%d %H:%M:%S", tz="GMT")
+head(md1_agg_df)
+```
+
+
+```{r}
+str(md1_agg_df$Pt_timeStamp[2])
+```
+
+## Convert the time series data for plotting
+```{r}
+ts <- xts(md1_agg_df$PWM_30min_avg, as.Date(md1_agg_df$Pt_timeStamp))
+head(ts)
+```
+
+## Plot the time series data
+```{r all_md1_data, fig.height = 5, fig.width = 10}
+autoplot(ts, ylab = "Aggregated PWM", xlab = "Time") + ggtitle("SDE-3 Aggregated PWM")
+```
+
+## Get the time series data after the data outage
+```{r md1_data_less, results='hide'}
+md1_less_df = md1_agg_df[md1_agg_df$Pt_timeStamp > as.POSIXct("2018-01-01 00:00:00", tz = "GMT") &
+                           md1_agg_df$Pt_timeStamp < as.POSIXct("2018-12-02 23:30:00", tz = "GMT"),]
+head(md1_less_df)
+```
+
+
+```{r}
+ts_less <- xts(md1_less_df$PWM_30min_avg, as.Date(md1_less_df$Pt_timeStamp))
+head(ts_less)
+```
+
+## Plot the time series data
+```{r plot_md1, fig.height = 3, fig.width = 10}
+autoplot(ts_less, ylab = "Aggregated PWM", xlab = "Time") +
+  ggtitle("MD1 Aggregated PWM from 1 Jan 2018")
+```
+
+## Plot the missing data
+```{r plot_md1_missing, fig.height = 4, fig.width = 10}
+plotNA.distribution(md1_less_df$PWM_30min_avg, cex=.1)
+```
+
+Many of the NAs appear at the end of each month (below) for the time period 2330H to 0000H (3 observations).
+
+```{r}
+md1_less_df[is.na(md1_less_df$PWM_30min_avg) & (md1_less_df$Pt_timeStamp > as.POSIXct("2018-03-25 00:00:00")),
+            "Pt_timeStamp"]
+```
+
+## Plot the distribution of the missing data
+```{r}
+plotNA.distributionBar(md1_less_df$PWM_30min_avg, breaks = 11)
+```
+
+## Plot the distribution of the missing data by gap size
+```{r, fig.height = 4, fig.width = 10}
+plotNA.gapsize(md1_less_df$PWM_30min_avg, byTotalNA = TRUE)
+```
+
+## Missing data statistics
+```{r}
+statsNA(md1_less_df$PWM_30min_avg, bins = 11)
+```
+
+# Impute the missing values using different imputation methods
+```{r}
+# Impute the missing values using structural model and Kalman smoothing
+imp <- na.kalman(md1_less_df["PWM_30min_avg"])
+
+# Impute the missing values using ARIMA model and Kalman smoothing
+imp_arima <- na.kalman(md1_less_df["PWM_30min_avg"], model = "auto.arima")
+
+# Impute the missing values using spline interpolation
+imp_spline <- na.interpolation(md1_less_df["PWM_30min_avg"], option = "spline")
+
+# Impute the missing values using moving average
+imp_ma <- na.ma(md1_less_df["PWM_30min_avg"], k=4, weighting="exponential")
+```
+
+## Plot the imputed data
+```{r plot_struc_imp_all, fig.height = 5, fig.width = 10}
+# structural model with kalman smoothing
+plotNA.imputations(x.withNA = md1_less_df$PWM_30min_avg,
+                   x.withImputations = imp$PWM_30min_avg,
+                   main = "Imputated Values Using Structural Model with Kalman Smoothing",
+                   ylim = c(-200, 550), cex = .1)
+```
+
+
+```{r plot_arima_imp_all, fig.height = 5, fig.width = 10}
+# arima model with kalman smoothing 
+plotNA.imputations(x.withNA = md1_less_df$PWM_30min_avg,
+                   x.withImputations = imp_arima$PWM_30min_avg,
+                   main = "Imputed Values Using Arima Model with Kalman Smoothing",
+                   ylim = c(-200, 550), cex = .1)
+```
+
+
+```{r plot_spline_imp_all, fig.height = 5, fig.width = 10}
+# spline interpolation
+plotNA.imputations(x.withNA = md1_less_df$PWM_30min_avg,
+                   x.withImputations = imp_spline$PWM_30min_avg,
+                   main = "Imputated Values Using Spline Interpolation",
+                   ylim = c(-200, 550), cex = .1)
+```
+
+
+```{r plot_ma_imp_all, fig.height = 5, fig.width = 10}
+# exponential moving average
+plotNA.imputations(x.withNA = md1_less_df$PWM_30min_avg,
+                   x.withImputations = imp_ma$PWM_30min_avg,
+                   main = "Imputed Values Using Exponential Moving Average",
+                   ylim = c(-200, 550), cex = .1)
+```
+
+Imputation missing data in the larger gaps appear wildly inaccurate for the arima model. 
+
+## Plot the imputed data for the 1st 5000 observations
+```{r plot_struc_imp1, fig.height = 5, fig.width = 10}
+plotNA.imputations(x.withNA = md1_less_df[1500:5000, "PWM_30min_avg"],
+                   x.withImputations = imp[1500:5000, "PWM_30min_avg"],
+                   main = "Imputed Values Using Structural Model With Kalman Smoothing",
+                   ylim = c(-200, 550), cex=.1)
+```
+
+
+```{r plot_arima_imp1, fig.height = 5, fig.width = 10}
+plotNA.imputations(x.withNA = md1_less_df[1500:5000, "PWM_30min_avg"],
+                   x.withImputations = imp_arima[1500:5000, "PWM_30min_avg"],
+                   main = "Imputed Values Using Arima Model with Kalman Smoothing", ylim = c(-200, 550), cex = .1)
+```
+
+Imputation of missing date in the large gaps fail to capture the variability seen in the time series data.
+
+
+```{r plot_spline_imp1, fig.height = 5, fig.width = 10}
+plotNA.imputations(x.withNA = md1_less_df[1500:5000, "PWM_30min_avg"],
+                   x.withImputations = imp_spline[1500:5000, "PWM_30min_avg"],
+                   main = "Imputed Values Using Spline Interpolation", ylim = c(-200, 550), cex = .1)
+```
+
+Imputation of missing date in the large gaps by spline interpolation captures better the variability seen in the time series data than the other methods.
+
+```{r plot_ma_imp1, fig.height = 5, fig.width = 10}
+plotNA.imputations(x.withNA = md1_less_df[1500:5000, "PWM_30min_avg"],
+                   x.withImputations = imp_ma[1500:5000, "PWM_30min_avg"],
+                   main = "Imputed Values Using Exponential Moving Average", ylim = c(-200, 550), cex = .1)
+```
+
+## Plot the imputed data for a large gap
+```{r plot_struc_imp2, fig.height = 5, fig.width = 10}
+plotNA.imputations(x.withNA = md1_less_df[2550:2800, "PWM_30min_avg"],
+                   x.withImputations = imp[2550:2800, "PWM_30min_avg"],
+                   main = "Imputed Values Using Structural Model With Kalman Smoothing",
+                   ylim = c(-200, 550), cex = .1)
+```
+
+In addition, imputation of data in the large gap fails to capture the variation in the data.
+
+```{r plot_arima_imp2, fig.height = 5, fig.width = 10}
+plotNA.imputations(x.withNA = md1_less_df[2550:2800, "PWM_30min_avg"],
+                   x.withImputations = imp_arima[2550:2800, "PWM_30min_avg"],
+                   main = "Imputed Values Using Arima Model With Kalman Smoothing",
+                   ylim = c(-200, 550), cex = .1)
+```
+
+
+```{r plot_spline_imp2, fig.height = 5, fig.width = 10}
+plotNA.imputations(x.withNA = md1_less_df[2550:2800, "PWM_30min_avg"],
+                   x.withImputations = imp_spline[2550:2800, "PWM_30min_avg"],
+                   main = "Imputed Values Using Spline Interpolation",
+                   ylim = c(-200, 550), cex = .1)
+```
+
+
+```{r plot_ma_imp2, fig.height = 5, fig.width = 10}
+plotNA.imputations(x.withNA = md1_less_df[2550:2800, "PWM_30min_avg"],
+                   x.withImputations = imp_ma[2550:2800, "PWM_30min_avg"],
+                   main = "Imputed Values Using Exponential Moving Average",
+                   ylim = c(-200, 550), cex = .1)
+```
+
+Imputation of missing data in the smaller gaps appear to be quite accurate (below).
+
+## Plot the imputed data for the 3500-4000 observations
+```{r plot_struc_imp3, fig.height = 5, fig.width = 10}
+plotNA.imputations(x.withNA = md1_less_df[4300:4400, "PWM_30min_avg"], x.withImputations = imp[4300:4400, "PWM_30min_avg"])
+```
+
+
+```{r plot_arima_imp3, fig.height = 5, fig.width = 10}
+plotNA.imputations(x.withNA = md1_less_df[4300:4400, "PWM_30min_avg"], x.withImputations = imp_arima[4300:4400, "PWM_30min_avg"])
+```
+
+
+```{r plot_spline_imp3, fig.height = 5, fig.width = 10}
+plotNA.imputations(x.withNA = md1_less_df[4300:4400, "PWM_30min_avg"], x.withImputations = imp_spline[4300:4400, "PWM_30min_avg"])
+```
+
+
+```{r plot_ma_imp3, fig.height = 5, fig.width = 10}
+plotNA.imputations(x.withNA = md1_less_df[4300:4400, "PWM_30min_avg"], x.withImputations = imp_ma[4300:4400, "PWM_30min_avg"])
+```
+
+## Prepare the data for MCAR test.
+```{r}
+md1_less_df$time <- as.numeric(rownames(md1_less_df))
+head(md1_less_df)
+```
+
+## Check the normality of the distribution.
+```{r plot_distribution_density}
+plot(density(md1_less_df$PWM_30min_avg, na.rm = TRUE))
+```
+
+The distribution does not look normal.
+
+## Perform the Shapiro-Wilks normality test. Limited to 5000 samples in test data due to test constraints.
+```{r}
+shapiro.test(md1_less_df[1:5000, c("PWM_30min_avg")])
+```
+
+The distribution of the data is significantly different from normal distribution.
+
+## Perform the test for MCAR (missing completely at random) non-normal data distribution
+
+```{r}
+out <- TestMCARNormality(data=md1_less_df[, c("time", "PWM_30min_avg")], method = "Nonparametric")
+```
+
+
+```{r}
+summary(out)
+```
+
+There is evidence to reject the null hypothesis (the missing data pattern is **not** MCAR).
+
+# MD6
+# Load data
+```{r load_data1, results='hide'}
+md6_agg_df <- read.csv("/home/tkokkeng/Documents/KE5105/ETL/source/processed_bldg_data/MD6.csv", header = TRUE, stringsAsFactors = FALSE)
+head(md6_agg_df)
+```
+
+## Convert the Pt_timeStamp strings to POSIX time
+```{r convert_data1, results='hide'}
+md6_agg_df$Pt_timeStamp <- strptime(md6_agg_df$Pt_timeStamp, format = "%Y-%m-%d %H:%M:%S", tz="GMT")
+head(md6_agg_df)
+```
+
+
+```{r}
+str(md6_agg_df$Pt_timeStamp[2])
+```
+
+## Convert the time series data for plotting
+```{r}
+ts <- xts(md6_agg_df$PWM_30min_avg, as.Date(md6_agg_df$Pt_timeStamp))
+head(ts)
+```
+
+## Plot the time series data
+```{r all_md6_data, fig.height = 5, fig.width = 10}
+autoplot(ts, ylab = "Aggregated PWM", xlab = "Time") + ggtitle("MD6 Aggregated PWM")
+```
+
+## Get the time series data after the data outage
+```{r md6_data_less, results='hide'}
+md6_less_df = md6_agg_df[md6_agg_df$Pt_timeStamp > as.POSIXct("2018-01-01 00:00:00", tz = "GMT") &
+                           md6_agg_df$Pt_timeStamp < as.POSIXct("2018-12-02 23:30:00", tz = "GMT"),]
+head(md6_less_df)
+```
+
+
+```{r}
+ts_less <- xts(md6_less_df$PWM_30min_avg, as.Date(md6_less_df$Pt_timeStamp))
+head(ts_less)
+```
+
+## Plot the time series data
+```{r plot_md6, fig.height = 3, fig.width = 10}
+autoplot(ts_less, ylab = "Aggregated PWM", xlab = "Time") +
+  ggtitle("MD6 Aggregated PWM from 1 Jan 2018")
+```
+
+## Plot the missing data
+```{r plot_md6_missing, fig.height = 4, fig.width = 10}
+plotNA.distribution(md6_less_df$PWM_30min_avg, cex=.1)
+```
+
+Many of the NAs appear at the end of each month (below) for the time period 2330H to 0000H (3 observations).
+
+```{r}
+md6_less_df[is.na(md6_less_df$PWM_30min_avg), "Pt_timeStamp"]
+```
+
+## Plot the distribution of the missing data
+```{r}
+plotNA.distributionBar(md6_less_df$PWM_30min_avg, breaks = 11)
+```
+
+## Plot the distribution of the missing data by gap size
+```{r, fig.height = 4, fig.width = 10}
+plotNA.gapsize(md6_less_df$PWM_30min_avg, byTotalNA = TRUE)
+```
+
+## Missing data statistics
+```{r}
+statsNA(md6_less_df$PWM_30min_avg, bins = 11)
+```
+
+# Impute the missing values using different imputation methods
+```{r}
+# Impute the missing values using structural model and Kalman smoothing
+imp <- na.kalman(md6_less_df["PWM_30min_avg"])
+
+# Impute the missing values using ARIMA model and Kalman smoothing
+imp_arima <- na.kalman(md6_less_df["PWM_30min_avg"], model = "auto.arima")
+
+# Impute the missing values using spline interpolation
+imp_spline <- na.interpolation(md6_less_df["PWM_30min_avg"], option = "spline")
+
+# Impute the missing values using moving average
+imp_ma <- na.ma(md6_less_df["PWM_30min_avg"], k=4, weighting="exponential")
+```
+
+## Plot the imputed data
+```{r plot_struc_imp1md6, fig.height = 5, fig.width = 10}
+# structural model with kalman smoothing
+plotNA.imputations(x.withNA = md6_less_df[1450:1550, "PWM_30min_avg"],
+                   x.withImputations = imp[1450:1550, "PWM_30min_avg"],
+                   main = "Imputated Values Using Structural Model with Kalman Smoothing",
+                   ylim = c(500, 1000), cex = .1)
+```
+
+
+```{r plot_arima_imp1md6, fig.height = 5, fig.width = 10}
+# arima model with kalman smoothing 
+plotNA.imputations(x.withNA = md6_less_df[1450:1550, "PWM_30min_avg"],
+                   x.withImputations = imp_arima[1450:1550, "PWM_30min_avg"],
+                   main = "Imputed Values Using Arima Model with Kalman Smoothing",
+                   ylim = c(500, 1000), cex = .1)
+```
+
+
+```{r plot_spline_imp1md6, fig.height = 5, fig.width = 10}
+# spline interpolation
+plotNA.imputations(x.withNA = md6_less_df[1450:1550, "PWM_30min_avg"],
+                   x.withImputations = imp_spline[1450:1550, "PWM_30min_avg"],
+                   main = "Imputated Values Using Spline Interpolation",
+                   ylim = c(500, 1000), cex = .1)
+```
+
+
+```{r plot_ma_imp1md6, fig.height = 5, fig.width = 10}
+# exponential moving average
+plotNA.imputations(x.withNA = md6_less_df[1450:1550, "PWM_30min_avg"],
+                   x.withImputations = imp_ma[1450:1550, "PWM_30min_avg"],
+                   main = "Imputed Values Using Exponential Moving Average",
+                   ylim = c(500, 1000), cex = .1)
+```
+
+## Plot the imputed data for another small gap
+```{r plot_struc_imp2md6, fig.height = 5, fig.width = 10}
+plotNA.imputations(x.withNA = md6_less_df[10500:10550, "PWM_30min_avg"],
+                   x.withImputations = imp[10500:10550, "PWM_30min_avg"],
+                   main = "Imputed Values Using Structural Model With Kalman Smoothing",
+                   ylim = c(500, 1000), cex=.1)
+```
+
+
+```{r plot_arima_imp2md6, fig.height = 5, fig.width = 10}
+plotNA.imputations(x.withNA = md6_less_df[10500:10550, "PWM_30min_avg"],
+                   x.withImputations = imp_arima[10500:10550, "PWM_30min_avg"],
+                   main = "Imputed Values Using Arima Model with Kalman Smoothing", ylim = c(500, 1000), cex = .1)
+```
+
+
+```{r plot_spline_imp2md6, fig.height = 5, fig.width = 10}
+plotNA.imputations(x.withNA = md6_less_df[10500:10550, "PWM_30min_avg"],
+                   x.withImputations = imp_spline[10500:10550, "PWM_30min_avg"],
+                   main = "Imputed Values Using Spline Interpolation", ylim = c(500, 1000), cex = .1)
+```
+
+
+```{r plot_ma_imp2md6, fig.height = 5, fig.width = 10}
+plotNA.imputations(x.withNA = md6_less_df[10500:10550, "PWM_30min_avg"],
+                   x.withImputations = imp_ma[10500:10550, "PWM_30min_avg"],
+                   main = "Imputed Values Using Exponential Moving Average", ylim = c(500, 1000), cex = .1)
+```
+
+## Prepare the data for MCAR test.
+```{r}
+md6_less_df$time <- as.numeric(rownames(md6_less_df))
+head(md6_less_df)
+```
+
+## Check the normality of the distribution.
+```{r plot_distribution_density_md6}
+plot(density(md6_less_df$PWM_30min_avg, na.rm = TRUE))
+```
+
+The distribution does not look normal.
+
+## Perform the Shapiro-Wilks normality test. Limited to 5000 samples in test data.
+```{r}
+shapiro.test(md6_less_df[1:5000, c("PWM_30min_avg")])
+```
+
+The distribution of the data is significantly different from normal distribution.
+
+## Perform the test for MCAR (missing completely at random) assuming non-normal data distribution
+```{r}
+out <- TestMCARNormality(data=md6_less_df[, c("time", "PWM_30min_avg")], method = "Nonparametric")
+```
+
+
+```{r}
+summary(out)
+```
+
+There is insufficient evidence to reject the null hypothesis (the missing data pattern **is MCAR**).
