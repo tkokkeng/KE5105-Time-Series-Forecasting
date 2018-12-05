@@ -136,7 +136,7 @@ plotNA.distribution(md1_less_df$PWM_30min_avg, cex=.1)
 
 ![](ETL5.impute.MD1MD6_files/figure-markdown_github/plot_md1_missing-1.png)
 
-Many of the NAs appear at the end of each month (below) for the time period 2330H to 0000H (3 observations).
+Many of the NAs appear at the end of each month (below) for the time period 2300H to 0000H (3 observations).
 
 ``` r
 md1_less_df[is.na(md1_less_df$PWM_30min_avg) & (md1_less_df$Pt_timeStamp > as.POSIXct("2018-03-25 00:00:00")),
@@ -365,8 +365,8 @@ plotNA.imputations(x.withNA = md1_less_df[2550:2800, "PWM_30min_avg"],
 
 Imputation of missing data in the smaller gaps appear to be quite accurate (below).
 
-Plot the imputed data for the 3500-4000 observations
-----------------------------------------------------
+Plot the imputed data at around the 4000th observation
+------------------------------------------------------
 
 ``` r
 plotNA.imputations(x.withNA = md1_less_df[4300:4400, "PWM_30min_avg"], x.withImputations = imp[4300:4400, "PWM_30min_avg"])
@@ -588,7 +588,7 @@ plotNA.distribution(md6_less_df$PWM_30min_avg, cex=.1)
 
 ![](ETL5.impute.MD1MD6_files/figure-markdown_github/plot_md6_missing-1.png)
 
-Many of the NAs appear at the end of each month (below) for the time period 2330H to 0000H (3 observations).
+Many of the NAs appear at the end of each month (below) for the time period 2330H to 0000H (2 observations).
 
 ``` r
 md6_less_df[is.na(md6_less_df$PWM_30min_avg), "Pt_timeStamp"]
