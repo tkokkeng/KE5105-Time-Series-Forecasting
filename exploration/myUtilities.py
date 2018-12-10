@@ -23,8 +23,10 @@ _MISC_DATA_PATH_ = os.path.join('source', 'other_data')
 
 # files
 _MSG_LOG_FILE_ = os.path.join('source', 'log', 'logfile.txt')
-_BLDG_FORMULAE_FILE_ = os.path.join(_MISC_DATA_PATH_, 'bldg-formulae.json')
+_BLDG_PWM_FORMULAE_FILE_ = os.path.join(_MISC_DATA_PATH_, 'bldg-PWM-formulae.json')
+_BLDG_BTU_FORMULAE_FILE_ = os.path.join(_MISC_DATA_PATH_, 'bldg-BTU-formulae.json')
 
+# Data input conversion utilities
 _DATA_TYPE_TO_PATH_ = {
     'raw': _RAW_DATA_PATH_,
     'combined': _COMBINED_DATA_PATH_,
@@ -46,8 +48,12 @@ _MONTH_TO_NUM_ = {
     'Dec': 12
 }
 
-with open(_BLDG_FORMULAE_FILE_) as json_file:
+# Aggregation formulae for PWM and BTU for each building
+with open(_BLDG_PWM_FORMULAE_FILE_) as json_file:
     _PWM_FORMULA_ = json.load(json_file)
+
+with open(_BLDG_BTU_FORMULAE_FILE_) as json_file:
+    _BTU_FORMULA_ = json.load(json_file)
 
 
 ######################################################################################################################
@@ -75,27 +81,27 @@ def get_num_files_by_bldg_mth(data_path=_RAW_DATA_PATH_):
     return file_list
 
 
-# This function loads the time series data for a list of building names. type is defined in _DATA_TYPE_TO_PATH_.
+# This function loads the time series data for a list of building names. data_type is defined in _DATA_TYPE_TO_PATH_.
 # It returns a list of [[name, data frame], ...]
-# If type='raw', building list must have only 1 building.
-def load_data_by_bldg(bldg_name_list, type, data_path=None):
+# If data_type='raw', building list must have only 1 building.
+def load_data_by_bldg(bldg_name_list, data_type, data_path=None):
 
     bldg_df_list = []
 
-    if type=='raw':
-        if data_path==None:
+    if data_type == 'raw':
+        if data_path is None:
             bldg_df_list = _load_data_by_bldg_(bldg_name_list[0])
         else:
             bldg_df_list = _load_data_by_bldg_(bldg_name_list[0], data_path=data_path)
-    # type is 'combined' or 'processed'
+    # data_type is 'combined' or 'processed'
     else:
         # load all files
         if bldg_name_list == 'all':
             files = os.listdir('combined_bldg_data')
-            if data_path == None:
-                files = [ os.path.join(_DATA_TYPE_TO_PATH_[type], files[i]) for i in files ]
+            if data_path is None:
+                files = [os.path.join(_DATA_TYPE_TO_PATH_[data_type], i) for i in files]
             else:
-                files = [ os.path.join(data_path, files[i]) for i in files ]
+                files = [os.path.join(data_path, i) for i in files]
             for i in files:
                 df = pd.read_csv(i, index_col=0, parse_dates=True)
                 df.sort_index(inplace=True)
@@ -104,8 +110,9 @@ def load_data_by_bldg(bldg_name_list, type, data_path=None):
         # load files in specified building name list
         else:
             for i in bldg_name_list:
-                if data_path==None:
-                    df = pd.read_csv(os.path.join(_DATA_TYPE_TO_PATH_[type], i + '.csv'), index_col=0, parse_dates=True)
+                if data_path is None:
+                    df = pd.read_csv(os.path.join(_DATA_TYPE_TO_PATH_[data_type], i + '.csv'),
+                                     index_col=0, parse_dates=True)
                 else:
                     df = pd.read_csv(os.path.join(data_path, i + '.csv'), index_col=0, parse_dates=True)
                 df.sort_index(inplace=True)
@@ -116,10 +123,9 @@ def load_data_by_bldg(bldg_name_list, type, data_path=None):
 
 # This function aggregates the raw time series PWM data for a building in the path according to the building's PWM
 # formula.
-# name is a list of building names or 'all'
-# errors are logged to _MSG_LOG_FILE_
-# **** This needs to be fixed. *****
-def process_PWM_data_by_bldg(bldg_name_list, input_data_path=_COMBINED_DATA_PATH_, output_data_path=_PROCESSED_DATA_PATH_):
+# name is a list of building names or 'all'; errors are logged to _MSG_LOG_FILE_
+# Returns True if at least 1 building data is written to a csv file.
+def process_data_by_bldg(bldg_name_list, input_data_path=_COMBINED_DATA_PATH_, output_data_path=_PROCESSED_DATA_PATH_):
 
     result = False
     bldg_df_list = load_data_by_bldg(bldg_name_list, 'combined', input_data_path)
@@ -128,6 +134,7 @@ def process_PWM_data_by_bldg(bldg_name_list, input_data_path=_COMBINED_DATA_PATH
 
         # Reindex the cumulative data to add any missing time periods. This is needed for differencing.
         start = df.index.min() - MonthBegin(n=1)  # set to first day of month
+        start = start.replace(hour=0, minute=0)  # set time to 00h00
         end = df.index.max() + MonthEnd(n=1)  # set to last day of month
         end = end.replace(hour=23, minute=30)  # set time to 23h30
         df = reindex_ts_df(df, start, end)
@@ -139,20 +146,54 @@ def process_PWM_data_by_bldg(bldg_name_list, input_data_path=_COMBINED_DATA_PATH
                 lambda x: (x[1] - x[0]) if ((x[0] > 0) and (x[1] >= x[0])) else np.NaN)
 
         # Calculate the aggregate PWM according to building formula.
+        pwm_formula_err = False
         try:
-            add_idx = list(map(lambda x: df.columns.get_loc(x), _PWM_FORMULA_[name][0]))
-            subtract_idx = list(map(lambda x: df.columns.get_loc(x), _PWM_FORMULA_[name][1]))
+            pwm_add_idx = list(map(lambda x: df.columns.get_loc(x), _PWM_FORMULA_[name][0]))
+            pwm_subtract_idx = list(map(lambda x: df.columns.get_loc(x), _PWM_FORMULA_[name][1]))
         except KeyError:
-            _write_msg_log_('Formula error in %s' % name, log=_MSG_LOG_FILE_)
+            _write_msg_log_('PWM formula error in %s' % name, log=_MSG_LOG_FILE_)
+            pwm_formula_err = True
         else:
-            df['PWM_sumadd'] = df.iloc[:, add_idx].apply(lambda x: np.nan if x.isnull().any() else x.sum(), axis=1)
-            if subtract_idx:
-                df['PWM_sumsubtract'] = df.iloc[:, subtract_idx].apply(lambda x: np.nan if x.isnull().any() else x.sum(),
-                                                                       axis=1)
-                df['PWM_30min_avg'] = df['PWM_sumadd'] - df['PWM_sumsubtract']
+            if pwm_add_idx:
+                df['PWM_sumadd'] = df.iloc[:, pwm_add_idx].apply(
+                    lambda x: np.nan if x.isnull().any() else x.sum(), axis=1)
+                if pwm_subtract_idx:
+                    df['PWM_sumsubtract'] = df.iloc[:, pwm_subtract_idx].apply(
+                        lambda x: np.nan if x.isnull().any() else x.sum(), axis=1)
+                    df['PWM_30min_avg'] = df['PWM_sumadd'] - df['PWM_sumsubtract']
+                else:
+                    # no terms to subtract in formula
+                    df['PWM_30min_avg'] = df['PWM_sumadd']
             else:
-                # no terms to subtract in formula
-                df['PWM_30min_avg'] = df['PWM_sumadd']
+                _write_msg_log_('PWM formula error in %s' % name, log=_MSG_LOG_FILE_)
+                pwm_formula_err = True
+
+        # Calculate the aggregate BTU according to building formula.
+        btu_formula_err = False
+        
+            btu_add_idx = list(map(lambda x: df.columns.get_loc(x), _BTU_FORMULA_[name][0]))
+            btu_subtract_idx = list(map(lambda x: df.columns.get_loc(x), _BTU_FORMULA_[name][1]))
+        except KeyError:
+            _write_msg_log_('BTU formula error in %s' % name, log=_MSG_LOG_FILE_)
+            btu_formula_err = True
+        else:
+            if btu_add_idx:
+                df['BTU_sumadd'] = df.iloc[:, btu_add_idx].apply(
+                    lambda x: np.nan if x.isnull().any() else x.sum(), axis=1)
+                if btu_subtract_idx:
+                    df['BTU_sumsubtract'] = df.iloc[:, btu_subtract_idx].apply(
+                        lambda x: np.nan if x.isnull().any() else x.sum(), axis=1)
+                    df['BTU_30min_avg'] = df['BTU_sumadd'] - df['BTU_sumsubtract']
+                else:
+                    # no terms to subtract in formula
+                    df['BTU_30min_avg'] = df['BTU_sumadd']
+            else:
+                _write_msg_log_('BTU formula error in %s' % name, log=_MSG_LOG_FILE_)
+                btu_formula_err = True
+
+        if pwm_formula_err and btu_formula_err:
+            pass
+        else:
             df.to_csv(os.path.join(output_data_path, name + '.csv'))
             result = True
 
@@ -293,48 +334,21 @@ def plot_pwm_upto10_bldgs(bldg_df_list):
     return None
 
 
-# This function re-indexes a time series data frame by filling in missing 30 min periods for a month.
-# def reindex_ts_df_mth(ts_df, month, year):
-#
-#     # Copy the data frame.
-#     df = ts_df.copy()
-#
-#     # Reindex the dataframe using the year/month/day/time, add NaN values for any period with no data.
-#     df.set_index('Pt_timeStamp', inplace=True)
-#     mmyyyy = str(month) + '/' + str(year)
-#     if not month % 12:
-#         mmplus1yyyy = str(1) + '/' + str(year+1)
-#     else:
-#         mmplus1yyyy = str(month + 1) + '/' + str(year)
-#     all_dates = pd.date_range(mmyyyy, mmplus1yyyy, freq='30min')
-#     df = df.reindex(all_dates)
-#     df.sort_index(inplace=True)
-#
-#     return df
-
-
 # This function re-indexes a time series data frame by filling in missing 30 min periods for a date range.
 # e.g. start='5/2015' or datetime
 def reindex_ts_df(ts_df, start, end):
     # Copy the data frame.
-    df = ts_df.copy()
+    # df = ts_df.copy()
+    df = ts_df
+    idx_name = df.index.name
 
     # Reindex the dataframe using the year/month/day/time, add NaN values for any period with no data.
     all_dates = pd.date_range(start, end, freq='30min')
     df = df.reindex(all_dates)
     df.sort_index(inplace=True)
+    df.index.name = idx_name
 
     return df
-
-
-# This function calculates the 30 min average PWM values from the cumulative values.
-def compute_30min_pwm(name, input_data_path=_COMBINED_DATA_PATH_, output_data_path=_PROCESSED_DATA_PATH_):
-    return None
-
-
-# This function calculates the proportion of NaNs in a data frame.
-# def ratio_nan(df):
-#     return df.isnull().sum().sum()/(len(df.columns)*len(df))
 
 
 # This function reads the log file.
