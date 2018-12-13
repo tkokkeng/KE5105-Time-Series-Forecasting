@@ -1,0 +1,432 @@
+---
+title: "KE5105 - Building Electrical Consumption Forecasting"
+output: github_document
+---
+
+# Extract, Transform and Load Data 7 - Data Imputation - MD1 and MD6
+
+# Summary of Findings
+* Data imputation was performed on the 20 test periods of MD1 and MD6 data with simulated missing completely at random (MCAR) data using :
+    * structural model with Kalman smoothing
+    * arima model with Kalman smoothing
+    * spline interpolation
+    * exponential moving average (k=4)
+* Outliers in the rmse were found in arima for all lambda values
+* 1-way anova test found
+    * for combined md1, md6 data, no significant differences
+    * for md1 data, no significant differences
+    * for md6 data, significant differences for all lambda
+* Multiple pairwise t-tests found the following relationships between rmse:
+    * for combined md1, md6 data, no significant differences
+    * for md1 data, no significant differences
+    * for md6 data :
+      * for lambda=.1, ma > struc
+      * for lambda=.15, ma > struc, spline
+      * for lambda=.2, ma, spline > struc
+      * for lambda=.25, ma > struc, spline
+
+# Load libraries
+```{r}
+library(ggplot2)
+library(xts)
+library(imputeTS)
+```
+
+# Load data
+```{r load_data, results='hide'}
+# Time series data
+md1_df <- read.csv("/home/tkokkeng/Documents/KE5105/ETL/source/processed_bldg_data/MD1.csv", header = TRUE, stringsAsFactors = FALSE)
+md6_df <- read.csv("/home/tkokkeng/Documents/KE5105/ETL/source/processed_bldg_data/MD6.csv", header = TRUE, stringsAsFactors = FALSE)
+
+# A list of 10 time series datasets with simulated missing data
+missing_list_md1 <- readRDS("/home/tkokkeng/Documents/KE5105/ETL/source/md1-data/sim_missing_data.md1.rds")
+missing_list_md6 <- readRDS("/home/tkokkeng/Documents/KE5105/ETL/source/md6-data/sim_missing_data.md6.rds")
+```
+
+
+```{r}
+cat("length MD1 data = ", length(missing_list_md1), "\n", "length MD6 data = ", length(missing_list_md6))
+```
+
+
+```{r}
+computeResults <- function(bldg_name, nresults, missing_list, data_df) {
+  
+  #results = vector('list', num_lambdas * num_datasets)
+  num_datasets = length(missing_list[[1]])-1
+  results = vector('list', nresults)
+  idx = 1
+  for (i in missing_list) {
+
+    for (j in 1:num_datasets) {
+      # test data
+      data_with_na = i[[j+1]]$data
+      data_true = data_df[i[[j+1]]$row:(i[[j+1]]$row+i[[j+1]]$size-1), ]$PWM_30min_avg
+      na_true = data_true[i[[j+1]]$na.ind]
+      
+      # Impute the missing values using structural model and Kalman smoothing
+      imp_struct <- na.kalman(data_with_na)
+      # Impute the missing values using ARIMA model and Kalman smoothing
+      imp_arima <- na.kalman(data_with_na, model = "auto.arima")
+      # Impute the missing values using spline interpolation
+      imp_spline <- na.interpolation(data_with_na, option = "spline")
+      # Impute the missing values using moving average
+      imp_ma <- na.ma(data_with_na, k=4, weighting="exponential")  
+    
+      # Save the imputed data to file (.csv)
+      for (k in list("imp_struct", "imp_arima", "imp_spline", "imp_ma")) {
+        df = data.frame(eval(parse(text = k)))
+        colnames(df) = c('PWM_30min_avg')
+        write.csv(df,
+                  file = paste(bldg_name, "_", k, "_", i$lambda, "_", j, ".csv", sep = ""),
+                  row.names = FALSE)
+      }
+      
+      # Extract all the imputed na values
+      na_imp_struct = imp_struct[i[[j+1]]$na.ind]
+      na_imp_arima = imp_arima[i[[j+1]]$na.ind]
+      na_imp_spline = imp_spline[i[[j+1]]$na.ind]
+      na_imp_ma = imp_ma[i[[j+1]]$na.ind]
+      
+      # compute rmse
+      rmse_struct = sqrt(mean((na_imp_struct - na_true)^2))
+      rmse_arima = sqrt(mean((na_imp_arima - na_true)^2))
+      rmse_spline = sqrt(mean((na_imp_spline - na_true)^2))
+      rmse_ma = sqrt(mean((na_imp_ma - na_true)^2))
+      
+      #Update results
+      results[[idx]] <- c(i$lambda, rmse_struct, rmse_arima, rmse_spline, rmse_ma)
+      idx = idx + 1
+    }
+  }
+  return(results)
+}
+```
+
+
+```{r}
+# Each list has lambda, missing1, ..., missing<n>
+nresults_md1 <- length(missing_list_md1) * (length(missing_list_md1[[1]])-1)
+nresults_md6 <- length(missing_list_md6) * (length(missing_list_md6[[1]])-1)
+results_md1 <- computeResults("md1", nresults_md1, missing_list_md1, md1_df)
+results_md6 <- computeResults("md6", nresults_md6, missing_list_md6, md6_df)
+results <- c(results_md1, results_md6)
+```
+
+
+```{r}
+results_df = as.data.frame(matrix(unlist(results), nrow = length(results), byrow = TRUE))
+colnames(results_df) = c("lambda", "struc", "arima", "spline", "ma")
+results_df
+```
+
+
+```{r}
+colMeans(results_df)
+# same as apply(results_df, 2, mean)
+```
+
+```{r}
+apply(results_df, 2, sd)
+```
+
+
+```{r}
+aggregate(results_df[, 2:5], list(lambda = results_df$lambda), mean)
+```
+
+
+```{r}
+aggregate(results_df[, 2:5], list(lambda = results_df$lambda), sd)
+```
+There are **outliers** in the RMSE for several ARIMA imputations. Let's look at test sample #9 in MD1 for lambda = .15.
+
+## Check the outliers in the ARIMA imputation.
+```{r}
+results = vector('list', 1)
+idx = 1
+for (j in list(10)) {
+  # test data
+  data_with_na = missing_list_md1[[2]][[j]]$data
+  data_true = md1_df[missing_list_md1[[2]][[j]]$row:(missing_list_md1[[2]][[j]]$row+missing_list_md1[[2]][[j]]$size-1), ]$PWM_30min_avg
+  na_true = data_true[missing_list_md1[[2]][[j]]$na.ind]
+  
+  # Impute the missing values using ARIMA model and Kalman smoothing
+  imp_arima <- na.kalman(data_with_na, model = "auto.arima")
+
+  # Extract all the imputed na values
+  na_imp_arima = imp_arima[missing_list_md1[[2]][[j]]$na.ind]
+
+  # compute rmse
+  rmse_arima = sqrt(mean((na_imp_arima - na_true)^2))
+
+  #Update results
+  results[[idx]] <- c(lambda=missing_list_md1[[2]]$lambda, rmse=rmse_arima, imp=list(imp_arima), data.withNA=list(data_with_na))
+  idx = idx + 1
+}  
+```
+
+
+```{r plot_arima_imp_outliers1, fig.height = 5, fig.width = 10}
+plotNA.imputations(x.withNA = results[[1]]$data.withNA,
+                   x.withImputations = results[[1]]$imp,
+                   main = "Imputed Values with High RMSE Using ARIMA Model with Kalman Smoothing",
+                   ylim = c(-10, 500), cex = .1)
+```
+
+Look into the variation in RMSE for structural model. E.g. for lambda=.1, sample 9 RMSE more than twice that of sample 1.
+```{r}
+results = vector('list', 2)
+idx = 1
+for (j in list(2, 9)) {
+  # test data
+  data_with_na = missing_list_md1[[2]][[j]]$data
+  data_true = md1_df[missing_list_md1[[2]][[j]]$row:(missing_list_md1[[2]][[j]]$row+missing_list_md1[[2]][[j]]$size-1), ]$PWM_30min_avg
+  na_true = data_true[missing_list_md1[[2]][[j]]$na.ind]
+  
+  # Impute the missing values using structural model and Kalman smoothing
+  imp_struc <- na.kalman(data_with_na)
+
+  # Extract all the imputed na values
+  na_imp_struc = imp_struc[missing_list_md1[[2]][[j]]$na.ind]
+
+  # compute rmse
+  rmse_struc = sqrt(mean((na_imp_struc - na_true)^2))
+
+  #Update results
+  results[[idx]] <- c(lambda=missing_list_md1[[2]]$lambda, rmse=rmse_struc, imp=list(imp_struc), data.withNA=list(data_with_na))
+  idx = idx + 1
+}  
+```
+
+
+```{r plot_struc_imp_outliers1, fig.height = 5, fig.width = 10}
+plotNA.imputations(x.withNA = results[[1]]$data.withNA[1:500],
+                   x.withImputations = results[[1]]$imp[1:500],
+                   main = "Imputed Values with low RMSE Using Structural Model with Kalman Smoothing",
+                   ylim = c(250, 500), cex = .1)
+```
+
+
+```{r plot_struc_imp_outliers2, fig.height = 5, fig.width = 10}
+plotNA.imputations(x.withNA = results[[2]]$data.withNA[1:500],
+                   x.withImputations = results[[2]]$imp[1:500],
+                   main = "Imputed Values with higher RMSE Using Structural Model with Kalman Smoothing",
+                   ylim = c(250, 500), cex = .1)
+```
+
+In the above plots, sample 9 shows more variation in the data than in sample 1. This may account for the higher RMSE.
+
+## Check for significance in the difference in the means of the RMSE.
+
+### One-way ANOVA
+
+#### Determine whether the means from the 4 imputation methods are equal.
+```{r}
+results_long_df <- reshape(results_df, varying = c('struc', 'arima', 'spline', 'ma'),
+                           timevar = "method", v.names='RMSE',
+                           times=c('struc', 'arima', 'spline', 'ma'), direction="long")
+results_long_df$method <- as.factor(results_long_df$method)
+results_long_df
+```
+
+
+```{r boxplots}
+for (i in list(.1, .15, .2, .25)) {
+  plot(RMSE ~ method, data = results_long_df[results_long_df$lambda == i, ],
+       main = paste("Combined Buildings RMSE for Lambda = ", i))
+}
+```
+
+#### Arima has outliers for all lambda values. Leave it out in the analysis.
+```{r boxplots_wo_arima}
+results_long_no_arima_df = results_long_df[results_long_df$method != "arima",]
+results_long_no_arima_df$method <- factor(results_long_no_arima_df$method)
+for (i in list(.1, .15, .2, .25)) {
+plot(RMSE ~ method, data = results_long_no_arima_df[results_long_no_arima_df$lambda == i, ],
+     main = paste("Combined Buildings RMSE for Lambda = ", i))
+}
+```
+
+```{r}
+for (i in list(.1, .15, .2, .25)) {
+  cat("lambda = ", i, "\n")
+  res = aov(RMSE ~ method, data = results_long_no_arima_df[results_long_no_arima_df$lambda == i, ])
+  print(summary(res))
+  cat("--------------------------------------------------------------------------------------------------------------\n")
+}
+```
+
+The anova tests found **insufficient evidence** to show that the differences are significant for all lambda values.
+
+### Pairwise t-test for lambda .1, .15, .2, .25 (exclude ARIMA)
+
+Pairwise multiple comparisons tests involve the computation of a p-value for each pair of the compared group. The p-value represents the risk of stating that an effect is statistically significant while this is not true. As the number of pairwise comparisons increases, and therefore the number of p-values, it becomes more likely to detect significant effects which are due to chance in reality.
+
+To deal with this problem, multiple pairwise comparisons tests involve p-value corrections: p-values are penalized (= their value is increased) as the number of comparisons increase.
+
+#### Results Summary
+No significant pairwise differences found.
+
+```{r}
+for (i in list(.1, .15, .2, .25)) {
+  cat("lambda = ", i, "\n")
+  print(pairwise.t.test(results_long_no_arima_df[results_long_no_arima_df$lambda == i,]$RMSE,
+                        results_long_no_arima_df[results_long_no_arima_df$lambda == i,]$method,
+                        p.adjust = "bonferroni"))
+  cat("--------------------------------------------------------------------------------------------------------------\n")
+}
+```
+
+for lambda = .15, exclude arima from test
+```{r}
+print(pairwise.t.test(results_long_df[(results_long_df$lambda == .15) & (results_long_df$method != "arima"),]$RMSE,
+                      results_long_df[(results_long_df$lambda == .15) & (results_long_df$method != "arima"),]$method,
+                      p.adjust = "bonferroni"))
+```
+
+## MD1 - Check for significance in the difference in the means of the RMSE.
+
+### One-way ANOVA
+
+#### Determine whether the means from the 4 imputation methods are equal.
+
+```{r}
+results_md1_df = as.data.frame(matrix(unlist(results_md1), nrow = length(results_md1), byrow = TRUE))
+colnames(results_md1_df) = c("lambda", "struc", "arima", "spline", "ma")
+results_long_md1_df <- reshape(results_md1_df, varying = c('struc', 'arima', 'spline', 'ma'),
+                           timevar = "method", v.names='RMSE',
+                           times=c('struc', 'arima', 'spline', 'ma'), direction="long")
+results_long_md1_df$method <- as.factor(results_long_md1_df$method)
+results_long_md1_df
+```
+
+
+```{r boxplots_md1}
+for (i in list(.1, .15, .2, .25)) {
+  plot(RMSE ~ method, data = results_long_md1_df[results_long_md1_df$lambda == i, ],
+       main = paste("MD1 RMSE for Lambda = ", i))
+}
+```
+
+
+```{r boxplots_wo_arima_md1}
+results_long_no_arima_md1_df = results_long_md1_df[results_long_md1_df$method != "arima",]
+results_long_no_arima_md1_df$method <- factor(results_long_no_arima_md1_df$method)
+for (i in list(.1, .15, .2, .25)) {
+plot(RMSE ~ method, data = results_long_no_arima_md1_df[results_long_no_arima_md1_df$lambda == i, ],
+     main = paste("MD1 RMSE for Lambda =", i))
+}
+```
+
+```{r}
+for (i in list(.1, .15, .2, .25)) {
+  cat("lambda = ", i, "\n")
+  res = aov(RMSE ~ method, data = results_long_no_arima_md1_df[results_long_no_arima_md1_df$lambda == i, ])
+  print(summary(res))
+  cat("--------------------------------------------------------------------------------------------------------------\n")
+}
+```
+
+The anova tests found **insufficient evidence** to show that the differences are significant for all lambda values.
+
+### Pairwise t-test for lambda .1, .15, .2, .25 (exclude ARIMA)
+
+#### Results Summary
+No significant pairwise differences found.
+```{r}
+for (i in list(.1, .15, .2, .25)) {
+  cat("lambda = ", i, "\n")
+  print(pairwise.t.test(results_long_no_arima_md1_df[results_long_no_arima_md1_df$lambda == i,]$RMSE,
+                        results_long_no_arima_md1_df[results_long_no_arima_md1_df$lambda == i,]$method,
+                        p.adjust = "bonferroni"))
+  cat("--------------------------------------------------------------------------------------------------------------\n")
+}
+```
+
+
+## MD6 - Check for significance in the difference in the means of the RMSE.
+
+### One-way ANOVA
+
+#### Determine whether the means from the 4 imputation methods are equal.
+
+```{r}
+results_md6_df = as.data.frame(matrix(unlist(results_md6), nrow = length(results_md6), byrow = TRUE))
+colnames(results_md6_df) = c("lambda", "struc", "arima", "spline", "ma")
+results_long_md6_df <- reshape(results_md6_df, varying = c('struc', 'arima', 'spline', 'ma'),
+                           timevar = "method", v.names='RMSE',
+                           times=c('struc', 'arima', 'spline', 'ma'), direction="long")
+results_long_md6_df$method <- as.factor(results_long_md6_df$method)
+results_long_md6_df
+```
+
+
+```{r boxplots_md6}
+for (i in list(.1, .15, .2, .25)) {
+  plot(RMSE ~ method, data = results_long_md6_df[results_long_md6_df$lambda == i, ],
+       main = paste("MD6 RMSE for Lambda = ", i))
+}
+```
+
+```{r boxplots_wo_arima_md6}
+results_long_no_arima_md6_df = results_long_md6_df[results_long_md6_df$method != "arima",]
+results_long_no_arima_md6_df$method <- factor(results_long_no_arima_md6_df$method)
+for (i in list(.1, .15, .2, .25)) {
+plot(RMSE ~ method, data = results_long_no_arima_md6_df[results_long_no_arima_md6_df$lambda == i, ],
+     main = paste("MD6 RMSE for Lambda = ", i))
+}
+```
+
+```{r}
+for (i in list(.1, .15, .2, .25)) {
+  cat("lambda = ", i, "\n")
+  res = aov(RMSE ~ method, data = results_long_no_arima_md6_df[results_long_no_arima_md6_df$lambda == i, ])
+  print(summary(res))
+  cat("--------------------------------------------------------------------------------------------------------------\n")
+}
+```
+
+The anova tests found **evidence** to show that the differences are significant for all lambda values.
+
+### Pairwise t-test for lambda .1, .15, .2, .25 (exclude ARIMA)
+
+#### Results Summary
+for lambda=.1, ma > struc
+for lambda=.15, ma > struc, spline
+for lambda=.2, ma, spline > struc
+for lambda=.25, ma > struc, spline
+
+```{r}
+for (i in list(.1, .15, .2, .25)) {
+  cat("lambda = ", i, "\n")
+  print(pairwise.t.test(results_long_no_arima_md6_df[results_long_no_arima_md6_df$lambda == i,]$RMSE,
+                        results_long_no_arima_md6_df[results_long_no_arima_md6_df$lambda == i,]$method,
+                        p.adjust = "bonferroni"))
+  cat("--------------------------------------------------------------------------------------------------------------\n")
+}
+```
+
+#### Show all the boxplots together 
+```{r boxplots_grid}
+par(mfrow = c(3, 4), mar = c(2, 2, 2, 2))
+for (i in list(.1, .15, .2, .25)) {
+plot(RMSE ~ method, data = results_long_no_arima_df[results_long_no_arima_df$lambda == i, ],
+     main = paste("All Bldgs RMSE for λ = ", i), ylim = c(2, 22),
+     xlab = NULL, ylab = NULL, cex.main = .7, cex.axis = .7)
+}
+for (i in list(.1, .15, .2, .25)) {
+plot(RMSE ~ method, data = results_long_no_arima_md1_df[results_long_no_arima_md1_df$lambda == i, ],
+     main = paste("MD1 RMSE for λ =", i), ylim = c(2, 22),
+     xlab = NULL, ylab = NULL, cex.main = .7, cex.axis = .7)
+}
+for (i in list(.1, .15, .2, .25)) {
+plot(RMSE ~ method, data = results_long_no_arima_md6_df[results_long_no_arima_md6_df$lambda == i, ],
+     main = paste("MD6 RMSE for λ = ", i), ylim = c(2, 22),
+     xlab = NULL, ylab = NULL, cex.main = .7, cex.axis = .7)
+}
+```
+
+The distributions of RMSE by method in MD1 boxplot has less overlap which explains why some of the differences between methods are significant.
+
+
