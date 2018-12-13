@@ -7,8 +7,12 @@ output: github_document
 ### Gap Size Analysis
 
 # Summary of Findings
-* RMSE increases with gap size and amount of missing data.
-  
+* RMSE increases with gap size.
+
+```{r global_options, include=FALSE}
+knitr::opts_chunk$set(cache = TRUE)
+```
+
 # Load libraries
 ```{r}
 library(ggplot2)
@@ -23,7 +27,7 @@ library(imputeTS)
 sde3_agg_df <- read.csv("/home/tkokkeng/Documents/KE5105/ETL/source/test_data/SDE-3.agg.csv", header = TRUE, stringsAsFactors = FALSE)
 
 # A list of 10 time series datasets with simulated missing data
-missing_list <- readRDS("sim_missing_data_gapsize.rds")
+missing_list <- readRDS("/home/tkokkeng/Documents/KE5105/ETL/source/sde3-data/sim_missing_data_gapsize.sde3.rds")
 ```
 
 
@@ -98,12 +102,13 @@ agg_df
 
 ```{r}
 agg_long_df <- melt(agg_df, id.vars = c("lambda", "gapsize", "na_percent"), variable.name = "method")
+colnames(agg_long_df)[5] <- "RMSE"
 agg_long_df
 ```
 
-
+RMSE appears to increase with gap size and / or the percentage of NAs.
 ```{r rmse_gapsize_plot, fig.height = 10, fig.width = 7}
-ggplot(agg_long_df, aes(x=gapsize, y=value, group=method)) +
+ggplot(agg_long_df, aes(x=gapsize, y=RMSE, group=method)) +
   geom_line(aes(color=method)) +
   geom_point(aes(color=method, size=na_percent), shape = 1) +
   scale_size_continuous(range = c(.2,10), trans = "exp") +
@@ -113,7 +118,7 @@ ggplot(agg_long_df, aes(x=gapsize, y=value, group=method)) +
 
 
 ```{r rmse_na_percent_plot, fig.height = 10, fig.width = 7}
-ggplot(agg_long_df, aes(x=na_percent, y=value, group=method)) +
+ggplot(agg_long_df, aes(x=na_percent, y=RMSE, group=method)) +
   geom_line(aes(color=method)) +
   geom_point(aes(color=method, size=gapsize), shape = 1) +
   scale_size_continuous(range = c(1,10)) +
@@ -121,4 +126,26 @@ ggplot(agg_long_df, aes(x=na_percent, y=value, group=method)) +
   ggtitle("Imputation RMSE by NA percentage and Lambda")
 ```
 
+For a constant gap size, the error does not increase with the total missing data (or the frequency of missing data).
 
+```{r rmse_na_percent_gapsize_plot, fig.height = 10, fig.width = 7}
+ggplot(agg_long_df, aes(x=na_percent, y=RMSE, group=method)) +
+  geom_line(aes(color=method)) +
+  geom_point(aes(color=method), shape = 1, size = 1) +
+  # geom_point(aes(color=method, size=gapsize), shape = 1) +
+  # scale_size_continuous(range = c(1,10)) +
+  facet_grid(gapsize ~ .) +
+  ggtitle("Imputation RMSE by NA percentage and Gap Size")
+```
+
+The percentage of NAs increases linearly for small gap sizes and exponentially for larger gap sizes.
+
+```{r na_percent_gapsize_plot, fig.height = 10, fig.width = 7}
+ggplot(agg_long_df, aes(x=na_percent, y=lambda)) +
+  geom_line() +
+  geom_point(shape = 1, size = 1) +
+  # geom_point(aes(color=method, size=gapsize), shape = 1) +
+  # scale_size_continuous(range = c(1,10)) +
+  facet_grid(gapsize ~ .) +
+  ggtitle("NA percentage by Gap Size")
+```
