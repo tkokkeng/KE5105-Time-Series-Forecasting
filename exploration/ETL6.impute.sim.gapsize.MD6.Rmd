@@ -1,0 +1,179 @@
+---
+title: "KE5105 - Building Electrical Consumption Forecasting"
+output: github_document
+---
+# Extract, Transform and Load Data 6 - Data Imputation - MD6
+## Simulate Missing Data by Gap Size
+
+# Summary of Findings
+* Simulated missing data for a range of gap sizes and lambda
+
+# Load libraries
+```{r}
+library(ggplot2)
+library(xts)
+library(imputeTS)
+
+source("/home/tkokkeng/Documents/KE5105/ETL/source/R/ETL.utils.R")
+```
+
+# Load data
+```{r load_data, results='hide'}
+md6_agg_df <- read.csv("/home/tkokkeng/Documents/KE5105/ETL/source/processed_bldg_data/MD6.csv",
+                        header = TRUE, stringsAsFactors = FALSE)
+head(md6_agg_df)
+```
+
+## Convert the Pt_timeStamp strings to POSIX time
+```{r convert_data, results='hide'}
+md6_agg_df$Pt_timeStamp <- strptime(md6_agg_df$Pt_timeStamp, format = "%Y-%m-%d %H:%M:%S", tz="GMT")
+head(md6_agg_df)
+```
+
+## Look for the largest contiguous subset of non-NA data
+```{r}
+PWM_notNA_df <- data.frame(md6_agg_df$PWM_30min_avg)
+head(PWM_notNA_df)
+```
+
+### Get a cumulative count of the NAs.
+```{r}
+PWM_notNA_df$na_cumsum = cumsum(is.na(PWM_notNA_df$md6_agg_df.PWM_30min_avg))
+head(PWM_notNA_df)
+```
+
+### Remove the rows with NAs, leaving only the data rows. Each consective data row has a unique cumulative count.
+```{r}
+PWM_notNA_df <- PWM_notNA_df[!is.na(PWM_notNA_df$md6_agg_df.PWM_30min_avg),]
+head(PWM_notNA_df)
+```
+
+### Group the data rows by their cumulative count and get the frequency which is the size of each contiguous block of data. 
+```{r}
+PWM_notNA_df <- as.data.frame(table(PWM_notNA_df$na_cumsum), stringsAsFactors = FALSE)
+colnames(PWM_notNA_df) <- c("row", "size")
+PWM_notNA_df$row = as.integer(PWM_notNA_df$row)
+head(PWM_notNA_df)
+```
+
+### Offset the row numbers to get the correct row index. 
+```{r}
+PWM_notNA_df[2:nrow(PWM_notNA_df), c("row")] <- tail(PWM_notNA_df$row, -1) + head(cumsum(PWM_notNA_df$size), -1) + 1
+head(PWM_notNA_df)
+```
+
+### Find the biggest contiguous data blocks. 
+```{r}
+PWM_notNA_df[which(PWM_notNA_df$size == max(PWM_notNA_df$size)),]
+```
+
+Plot the data.
+```{r}
+ts <- xts(md6_agg_df[4322:(4322+1486-1),]$PWM_30min_avg, md6_agg_df[4322:(4322+1486-1),]$Pt_timeStamp)
+```
+
+## Plot the time series data for a period without missing data
+```{r plot_md6, fig.height = 3, fig.width = 10}
+autoplot(ts) +
+  ylab("Aggregated PWM") +
+  xlab("Time") +
+  ggtitle("MD6 Aggregated PWM for a Period without Missing Data")
+```
+
+
+```{r}
+which(is.na(md6_agg_df[4322:(4322+1486),]$PWM_30min_avg))
+```
+
+#### Exponential Distribution (https://en.wikipedia.org/wiki/Exponential_distribution)
+![Exponential Distribution](./images/360px-Exponential_pdf.svg.png)
+
+### Simulate missing data for 1 contiguous data block
+```{r}
+ts <- ts(md6_agg_df[4322:(4322+1486-1),]$PWM_30min_avg)
+missing <- create.missing(data = ts, rate = .05, gapsize=10, seed = 729)
+```
+
+### Prepare the simulated data for plotting
+```{r}
+removed_data <- prepare.plot.data(missing, md6_agg_df[4322:(4322+1486-1),]$PWM_30min_avg)
+```
+
+### PLot the simulated missing data
+```{r plot_md6_missing, fig.height = 4, fig.width = 10}
+ts_removed_data = ts(removed_data)
+ts_data_with_missing = ts(missing$data)
+tsm <- cbind(ts_removed_data, ts_data_with_missing)
+plot.ts(tsm, plot.type = "single", col = c("red", "blue"), type = "o", pch = 19, cex = .4, ylab = "PWM")
+title("MD6 Aggregated PWM with Simulated Gap Size of 10")
+```
+
+
+```{r plot_md6_missing_zoom, fig.height = 4, fig.width = 10}
+plot.ts(tsm[100:250,], plot.type = "single", col = c("red", "blue"), type = "o", pch = 19, cex = .4, ylab = "PWM")
+title("MD6 Aggregated PWM with Simulated Gap Size of 10")
+```
+
+### Distribution of simulated missing data
+```{r distribution_NA}
+plotNA.distributionBar(missing$data, breaks = 30, main = "MD6 Distribution of NAs")
+```
+
+## Plot the distribution of the missing data by gap size
+```{r distribution_NA_gapsize}
+plotNA.gapsize(missing$data, byTotalNA = TRUE, main = "MD6 Occurrence of gap sizes (NAs in a row)")
+```
+
+
+```{r}
+statsNA(missing$data, bins = 30)
+```
+
+## Create the simulated missing data for a set of contiguous data blocks.
+```{r}
+# Sort the contiguous data blocks by size.
+PWM_notNA_df <- PWM_notNA_df[order(-PWM_notNA_df$size),]
+head(PWM_notNA_df, 10)
+```
+
+
+```{r}
+# this is the number of time series data blocks we are extracting from the SDE-3 data to simulate the missing data 
+num_datasets = 10
+
+# lambda values and gap sizes
+lambda_list = seq(5, 25, by=5)
+gap_size_list = c(2, 3, 4, 5, 7, 9, 14, 23)
+
+missing_list <- create.all.missing(lambda_list, gap_size_list, PWM_notNA_df[1:num_datasets,], md6_agg_df)
+```
+
+
+```{r plot_md6_missing_check, fig.height = 4, fig.width = 10}
+# Check the generated data for 1 block
+removed_data <-
+  prepare.plot.data(missing_list[[20]][[3]],
+                    md6_agg_df[missing_list[[20]][[3]]$row:(missing_list[[20]][[3]]$row+missing_list[[20]][[3]]$size-1),]$PWM_30min_avg)
+
+ts_removed_data = ts(removed_data)
+ts_data_with_missing = ts(missing_list[[20]][[3]]$data)
+tsm <- cbind(ts_removed_data, ts_data_with_missing)
+plot.ts(tsm, plot.type = "single", col = c("red", "blue"), type = "o", pch = 19, cex = .4, ylab = "PWM")
+title(paste("MD6 Aggregated PWM with Simulated Gap Size of ", missing_list[[20]]$gapsize))
+```
+
+
+```{r all_distribution_gapsize}
+for (i in missing_list) {
+  plotNA.gapsize(i[[2]]$data, main=paste("MD6 lambda =", i[[1]], " gapsize =", tail(i, n = 1)[[1]]), byTotalNA = TRUE)
+  cat("MD6 Missing data statistics for lambda =", toString(i[[1]]), " gapsize =", toString(tail(i, n = 1)[[1]]), "\n")
+  statsNA(i[[2]]$data)
+  cat("\n")
+}
+```
+
+## Save the simulated missing data to file.
+```{r}
+saveRDS(missing_list, "sim_missing_data_gapsize.md6.rds")
+```
+
