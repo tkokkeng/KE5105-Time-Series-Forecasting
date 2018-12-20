@@ -19,6 +19,7 @@ import json
 _RAW_DATA_PATH_ = os.path.join('source', '105 building data')
 _COMBINED_DATA_PATH_ = os.path.join('source', 'combined_bldg_data')
 _PROCESSED_DATA_PATH_ = os.path.join('source', 'processed_bldg_data')
+_IMPUTED_DATA_PATH_ = os.path.join('source', 'imputed_bldg_data')
 _MISC_DATA_PATH_ = os.path.join('source', 'other_data')
 
 # files
@@ -148,18 +149,23 @@ def process_data_by_bldg(bldg_name_list, input_data_path=_COMBINED_DATA_PATH_, o
         # Calculate the aggregate PWM according to building formula.
         pwm_formula_err = False
         try:
-            pwm_add_idx = list(map(lambda x: df.columns.get_loc(x), _PWM_FORMULA_[name][0]))
-            pwm_subtract_idx = list(map(lambda x: df.columns.get_loc(x), _PWM_FORMULA_[name][1]))
+            # Get the components from the building formula - attributes, additive modifiers, multiplicative modifiers.
+            # See comments in function definition.
+            pwm_add_idx, pwm_add_add_mods, pwm_add_multi_mods = _decompose_formula_(df, _PWM_FORMULA_[name][0])
+            pwm_subtract_idx, pwm_subtract_add_mods, pwm_subtract_multi_mods =\
+                _decompose_formula_(df, _PWM_FORMULA_[name][1])
         except KeyError:
             _write_msg_log_('PWM formula error in %s' % name, log=_MSG_LOG_FILE_)
             pwm_formula_err = True
         else:
             if pwm_add_idx:
                 df['PWM_sumadd'] = df.iloc[:, pwm_add_idx].apply(
-                    lambda x: np.nan if x.isnull().any() else x.sum(), axis=1)
+                    lambda x: np.nan if x.isnull().any() else (
+                            (x * np.array(pwm_add_multi_mods)).sum() + sum(pwm_add_add_mods)), axis=1)
                 if pwm_subtract_idx:
                     df['PWM_sumsubtract'] = df.iloc[:, pwm_subtract_idx].apply(
-                        lambda x: np.nan if x.isnull().any() else x.sum(), axis=1)
+                        lambda x: np.nan if x.isnull().any() else (
+                                (x * np.array(pwm_subtract_multi_mods)).sum() + sum(pwm_subtract_add_mods)), axis=1)
                     df['PWM_30min_avg'] = df['PWM_sumadd'] - df['PWM_sumsubtract']
                 else:
                     # no terms to subtract in formula
@@ -168,25 +174,30 @@ def process_data_by_bldg(bldg_name_list, input_data_path=_COMBINED_DATA_PATH_, o
                 _write_msg_log_('PWM formula error in %s' % name, log=_MSG_LOG_FILE_)
                 pwm_formula_err = True
 
-        # Calculate the aggregate BTU according to building formula.
+        # Calculate the aggregate BTU according to building formula. See comments above for PWM calculations.
         btu_formula_err = False
-        
-            btu_add_idx = list(map(lambda x: df.columns.get_loc(x), _BTU_FORMULA_[name][0]))
-            btu_subtract_idx = list(map(lambda x: df.columns.get_loc(x), _BTU_FORMULA_[name][1]))
+        try:
+            btu_add_idx, btu_add_add_mods, btu_add_multi_mods = _decompose_formula_(df, _BTU_FORMULA_[name][0])
+            btu_subtract_idx, btu_subtract_add_mods, btu_subtract_multi_mods =\
+                _decompose_formula_(df, _BTU_FORMULA_[name][1])
         except KeyError:
             _write_msg_log_('BTU formula error in %s' % name, log=_MSG_LOG_FILE_)
             btu_formula_err = True
         else:
             if btu_add_idx:
                 df['BTU_sumadd'] = df.iloc[:, btu_add_idx].apply(
-                    lambda x: np.nan if x.isnull().any() else x.sum(), axis=1)
+                    lambda x: np.nan if x.isnull().any() else (
+                            (x * np.array(btu_add_multi_mods)).sum() + sum(btu_add_add_mods)), axis=1)
                 if btu_subtract_idx:
                     df['BTU_sumsubtract'] = df.iloc[:, btu_subtract_idx].apply(
-                        lambda x: np.nan if x.isnull().any() else x.sum(), axis=1)
+                        lambda x: np.nan if x.isnull().any() else (
+                                (x * np.array(btu_subtract_multi_mods)).sum() + sum(btu_subtract_add_mods)), axis=1)
                     df['BTU_30min_avg'] = df['BTU_sumadd'] - df['BTU_sumsubtract']
                 else:
                     # no terms to subtract in formula
                     df['BTU_30min_avg'] = df['BTU_sumadd']
+                # Remove any negative BTU values.
+                df['BTU_30min_avg'] = df['BTU_30min_avg'].map(lambda x: np.NaN if x < 0 else x)
             else:
                 _write_msg_log_('BTU formula error in %s' % name, log=_MSG_LOG_FILE_)
                 btu_formula_err = True
@@ -194,6 +205,14 @@ def process_data_by_bldg(bldg_name_list, input_data_path=_COMBINED_DATA_PATH_, o
         if pwm_formula_err and btu_formula_err:
             pass
         else:
+            if not btu_formula_err:
+                # Remove outliers in BTU
+                q1 = df['BTU_30min_avg'].quantile(.25)
+                q3 = df['BTU_30min_avg'].quantile(.75)
+                iqr = q3 - q1
+                df['BTU_30min_avg'] = df['BTU_30min_avg'].map(
+                    lambda x: np.NaN if ((x > (q3 + iqr * 3.0)) or (x < (q1 - iqr * 3.0))) else x)
+            # Save to file
             df.to_csv(os.path.join(output_data_path, name + '.csv'))
             result = True
 
@@ -392,3 +411,24 @@ def _load_data_by_bldg_(name, data_path=_RAW_DATA_PATH_):
                     df = pd.read_csv(os.path.join(root, afile))
                     file_list.append([afile, year, month, df])
     return file_list
+
+
+# This function decoompose a building formula into its components.
+# Each formula is the difference of 2 lists which are summed : [summadd] - [sumsubstract]
+# Each list comprises attributes (e.g. PWMSDE3IC1) and additive modifiers (a constant e.g. 9578551)
+# Each attribute can also be a list [attr, multiplicative modifier]. In such cases, the value of the
+# attribute is multiplied by the modifier which is a numerical constant.
+# E.g. [["BTUE5_30min_avg", 3465519], [["BTULT3&4_30min_avg", 0.5], "BTUCompCenter_30min_avg"]] is
+# (BTUE5_30min_avg + 3465519) - (BTULT3&4_30min_avg * 0.5 + BTUCompCenter_30min_avg)
+def _decompose_formula_(df, attr_list):
+    pwm_add_idx, pwm_add_add_mods, pwm_add_multi_mods = [], [], []
+    for j in attr_list:
+        if isinstance(j, int) or isinstance(j, float):
+            pwm_add_add_mods.append(j)
+        elif isinstance(j, list):
+            pwm_add_idx.append(df.columns.get_loc(j[0]))
+            pwm_add_multi_mods.append(j[1])
+        else:
+            pwm_add_idx.append(df.columns.get_loc(j))
+            pwm_add_multi_mods.append(1.0)
+    return pwm_add_idx, pwm_add_add_mods, pwm_add_multi_mods
