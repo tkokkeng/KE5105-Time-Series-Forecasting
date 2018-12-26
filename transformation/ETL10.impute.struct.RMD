@@ -1,0 +1,214 @@
+---
+title: "KE5105 - Building Electrical Consumption Forecasting"
+output: github_document
+---
+# Extract, Transform and Load Data 10 - Data Imputation
+
+# Summary of Findings
+* Create the following datasets for 4 selected buildings - AS5, MRB, S1A, SDE-2 - which have higher quality data among the 10 group 1 buildings (see jupyter notebook etl9.explore_btu.ipynb for details) : 
+    * training dataset with imputation of PWM and BTU data using structural model and Kalman smoothing (data from start date to 31/3/17, ~22 mths)
+    * validation / test dataset with imputation (1/1/18 to 30/11/18, 11 mth)
+
+# Load libraries
+```{r}
+library(ggplot2)
+library(xts)
+library(imputeTS)
+library(MissMech)
+
+source("/home/tkokkeng/Documents/KE5105/ETL/source/R/ETL.utils.R")
+```
+
+# Load data for 1 building
+```{r load_data_1_bldg, results='hide'}
+bldg <- "AS5"
+agg_df <- read.csv(paste("/home/tkokkeng/Documents/KE5105/ETL/source/processed_bldg_data/", bldg, ".csv", sep = ""),
+                   header = TRUE, stringsAsFactors = FALSE)
+head(agg_df)
+```
+
+## Convert the Pt_timeStamp strings to POSIX time
+```{r convert_data, results='hide'}
+agg_df$Pt_timeStamp <- strptime(agg_df$Pt_timeStamp, format = "%Y-%m-%d %H:%M:%S", tz="GMT")
+head(agg_df)
+```
+
+## Plot the time series data
+```{r all_pwm_data, fig.height = 5, fig.width = 10}
+pwm_ts <- xts(agg_df$PWM_30min_avg, as.Date(agg_df$Pt_timeStamp))
+autoplot(pwm_ts, ylab = "Aggregated PWM", xlab = "Time") + ggtitle(paste(bldg, " Aggregated PWM"))
+```
+
+
+```{r all_btu_data, fig.height = 5, fig.width = 10}
+btu_ts <- xts(agg_df$BTU_30min_avg, as.Date(agg_df$Pt_timeStamp))
+autoplot(btu_ts, ylab = "Aggregated BTU", xlab = "Time") + ggtitle(paste(bldg, " Aggregated BTU"))
+```
+
+## Get the boundary dates. Training data period from around May 15 to Apr 17, validation and test data period in 2018.
+```{r}
+min(agg_df[!is.na(agg_df$PWM_30min_avg), "Pt_timeStamp"])
+```
+
+
+```{r}
+min(agg_df[is.na(agg_df$PWM_30min_avg) & (agg_df$Pt_timeStamp > as.POSIXct("2017-03-01 00:00:00", tz = "GMT")), "Pt_timeStamp"])
+```
+
+
+```{r}
+min(agg_df[!is.na(agg_df$PWM_30min_avg) & (agg_df$Pt_timeStamp > as.POSIXct("2017-12-01 00:00:00", tz = "GMT")), "Pt_timeStamp"])
+```
+
+
+```{r}
+min(agg_df[is.na(agg_df$PWM_30min_avg) & (agg_df$Pt_timeStamp > as.POSIXct("2018-11-01 00:00:00", tz = "GMT")), "Pt_timeStamp"])
+```
+
+## Check the PWM missing data for the training period.
+```{r}
+statsNA(agg_df[(agg_df$Pt_timeStamp > as.POSIXct("2015-05-31 23:30:00", tz = "GMT")) &
+                 (agg_df$Pt_timeStamp < as.POSIXct("2017-04-01 00:00:00", tz = "GMT")),
+               "PWM_30min_avg"], bins = 22)
+```
+
+# Load data for 4 selected buildings
+```{r load_data_4_bldg, results='hide'}
+bldgs <-c("AS5", "MRB", "S1A", "SDE-2")
+agg_df <- vector("list", length(bldgs))
+for (i in 1:length(bldgs)) {
+  agg_df[[i]] <- read.csv(paste("/home/tkokkeng/Documents/KE5105/ETL/source/processed_bldg_data/", bldgs[i], ".csv", sep = ""),
+                        header = TRUE, stringsAsFactors = FALSE)
+  agg_df[[i]]$Pt_timeStamp <- strptime(agg_df[[i]]$Pt_timeStamp, format = "%Y-%m-%d %H:%M:%S", tz="GMT")
+}
+```
+
+## Check the 1st date data is available.
+```{r}
+mindate_with_data <- vector("list", 4)
+for (i in 1:length(bldgs)) {
+  mindate_with_data[[i]] <-  min(agg_df[[i]][!is.na(agg_df[[i]]$PWM_30min_avg), "Pt_timeStamp"])
+  print(paste(bldgs[i], "1st data is from ", mindate_with_data[[i]], "\n"))
+}
+```
+
+
+```{r plot_pwm_start}
+for (i in 1:length(bldgs)) {
+  cat(i, bldgs[i], "\n")
+  pwm_ts <- xts(agg_df[[i]][agg_df[[i]]$Pt_timeStamp < as.POSIXct("2015-08-01 00:00:00", tz = "GMT"), "PWM_30min_avg"],
+                as.Date(agg_df[[i]][agg_df[[i]]$Pt_timeStamp < as.POSIXct("2015-08-01 00:00:00", tz = "GMT"), "Pt_timeStamp"]))
+  print(autoplot(pwm_ts, ylab = "Aggregated PWM", xlab = "Time") + ggtitle(paste(bldgs[i], " Aggregated PWM")))
+}
+```
+
+## Check the PWM missing data for the training period.
+```{r}
+for (i in 1:length(bldgs)) {
+  print(paste(bldgs[i], "data from date", mindate_with_data[[i]]))
+  statsNA(agg_df[[i]][(agg_df[[i]]$Pt_timeStamp >= as.POSIXct(mindate_with_data[[i]], tz = "GMT")) &
+                        (agg_df[[i]]$Pt_timeStamp < as.POSIXct("2017-04-01 00:00:00", tz = "GMT")),
+                      "PWM_30min_avg"], bins = 22)
+  cat("\n")
+}
+```
+
+## Check the BTU missing data for the training period.
+```{r}
+for (i in 1:length(bldgs)) {
+  print(paste(bldgs[i], "data from date", mindate_with_data[[i]]))
+  statsNA(agg_df[[i]][(agg_df[[i]]$Pt_timeStamp >= as.POSIXct(mindate_with_data[[i]], tz = "GMT")) &
+                        (agg_df[[i]]$Pt_timeStamp < as.POSIXct("2017-04-01 00:00:00", tz = "GMT")),
+                      "BTU_30min_avg"], bins = 22)
+  cat("\n")
+}
+```
+
+## Check the PWM missing data for the validation / test period.
+```{r}
+for (i in 1:length(bldgs)) {
+  cat(bldgs[i], "\n")
+  statsNA(agg_df[[i]][(agg_df[[i]]$Pt_timeStamp > as.POSIXct("2017-12-31 23:30:00", tz = "GMT")) &
+                        (agg_df[[i]]$Pt_timeStamp < as.POSIXct("2018-12-01 00:00:00", tz = "GMT")),
+                      "PWM_30min_avg"], bins = 11)
+  cat("\n")
+}
+```
+
+## Check the BTU missing data for the validation / test period.
+```{r}
+for (i in 1:length(bldgs)) {
+  cat(bldgs[i], "\n")
+  statsNA(agg_df[[i]][(agg_df[[i]]$Pt_timeStamp > as.POSIXct("2017-12-31 23:30:00", tz = "GMT")) &
+                        (agg_df[[i]]$Pt_timeStamp < as.POSIXct("2018-12-01 00:00:00", tz = "GMT")),
+                      "BTU_30min_avg"], bins = 11)
+  cat("\n")
+}
+```
+
+# Create the following datasets for the selected buildings
+  * training dataset with imputation using structural model and Kalman smoothing (data start date to 31/3/17, ~22 mths)
+  * validation / test  dataset with imputation (1/1/18 to 30/11/18, 11 mth)
+
+##  Imputation
+```{r}
+# Create folder for storing imputed data.
+if (!dir.exists(file.path(getwd(), "data"))) {
+  dir.create(file.path(getwd(), "data"))
+}
+
+# Imputation parameters
+max_imp_gap <- 3
+for (i in 1:length(bldgs)) {
+  cat("Imputing", bldgs[i], "...\n")
+
+  # training
+  train <- agg_df[[i]][(agg_df[[i]]$Pt_timeStamp >= as.POSIXct(mindate_with_data[[i]], tz = "GMT")) &
+                         (agg_df[[i]]$Pt_timeStamp < as.POSIXct("2017-04-01 00:00:00", tz = "GMT")),]
+  imp_train_pwm <- imputeData(data = train$PWM_30min_avg, maxGapSize = 3)
+  imp_train_btu <- imputeData(data = train$BTU_30min_avg, maxGapSize = 3)
+
+  # Save to file.
+  train$PWM_30min_avg <- imp_train_pwm
+  train$BTU_30min_avg <- imp_train_btu
+  write.csv(train, file = file.path(getwd(), "data", paste(bldgs[i], "_", "train", "_", "imputed", ".csv", sep = "")),
+            na = "", row.names = FALSE)
+  
+  # validation / test
+  valtest <- agg_df[[i]][(agg_df[[i]]$Pt_timeStamp > as.POSIXct("2017-12-31 23:30:00", tz = "GMT")) &
+                           (agg_df[[i]]$Pt_timeStamp < as.POSIXct("2018-12-01 00:00:00", tz = "GMT")),]
+  imp_valtest_pwm <- imputeData(data = valtest$PWM_30min_avg, maxGapSize = 3)
+  imp_valtest_btu <- imputeData(data = valtest$BTU_30min_avg, maxGapSize = 3)
+
+  # Save to file.
+  valtest$PWM_30min_avg <- imp_valtest_pwm
+  valtest$BTU_30min_avg <- imp_valtest_btu
+  write.csv(valtest, file = file.path(getwd(), "data", paste(bldgs[i], "_", "valtest", "_", "imputed", ".csv", sep = "")),
+            na = "", row.names = FALSE)
+}
+```
+
+## Check the imputation results for the training data for 1 building
+```{r}
+bldg <- "AS5"
+bldg_df <- read.csv(file.path(getwd(), "data", paste(bldg, "_", "train", "_", "imputed", ".csv", sep = "")),
+                    header = TRUE, stringsAsFactors = FALSE)
+```
+
+## Compare the below with the statsNA results after line 111 (above).
+```{r}
+statsNA(bldg_df$PWM_30min_avg, bins = 22)
+```
+
+## Original data
+```{r}
+agg_df[[1]][(agg_df[[1]]$Pt_timeStamp > as.POSIXct("2015-11-28 23:30:00", tz = "GMT")) &
+              (agg_df[[1]]$Pt_timeStamp < as.POSIXct("2015-12-15 00:00:00", tz = "GMT")), "PWM_30min_avg"]
+```
+
+## Imputed data (to compare with above)
+```{r}
+bldg_df[(bldg_df$Pt_timeStamp > as.POSIXct("2015-11-28 23:30:00", tz = "GMT")) &
+          (bldg_df$Pt_timeStamp < as.POSIXct("2015-12-15 00:00:00", tz = "GMT")), "PWM_30min_avg"]
+```
+
