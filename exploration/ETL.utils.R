@@ -177,3 +177,39 @@ computeResults <- function(bldg_name, missing_list, data_df, varGapSize = TRUE) 
   }
   return(results)
 }
+
+## Perform data imputation for missing data up to the maximum specified gap size.
+## Missing data of gap size larger than the maximum are ignored.
+imputeData <- function(data, maxGapSize = 3) {
+  #imp_train <- na.kalman(train$PWM_30min_avg)
+  imp <- na.kalman(data)
+  # remove imputed data for gaps larger than max gap
+  big_gaps_df <- findGapsBiggerThan(data, maxGapSize = 3)
+  if (nrow(big_gaps_df) > 0) {
+    for (i in 1:nrow(big_gaps_df)) {
+      imp[big_gaps_df[i, "row"]:(big_gaps_df[i, "row"] + big_gaps_df[i, "size"] - 1)] <- array(NA, dim = big_gaps_df[i, "size"])
+    }
+  }
+  return(imp)
+}
+
+## Find all missing data of gap size larger than the specified maximum gap size.
+## Each missing data gap is identified by row and gap size.
+findGapsBiggerThan <- function(data, maxGapSize = 3) {
+  
+  # Find all gaps in the data
+  na_df <- data.frame(data)
+  na_df$notna_cumsum <- cumsum(!is.na(data))
+  na_df <- na_df[is.na(data), ]
+  na_df <- as.data.frame(table(na_df$notna_cumsum), stringsAsFactors = FALSE)
+  colnames(na_df) <- c("row", "size")
+  na_df$row <- as.integer(na_df$row)
+  
+  na_df[1, c("row")] <- na_df[1, c("row")] + 1
+
+  na_df[2:nrow(na_df), c("row")] <- tail(na_df$row, -1) + head(cumsum(na_df$size), -1) + 1
+  # Remove the gaps less than equal to max gap size 
+  na_df <- na_df[na_df$size > maxGapSize,]
+  
+  return(na_df)
+}
