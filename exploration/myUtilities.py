@@ -10,6 +10,15 @@ import matplotlib.pyplot as plt
 import numpy as np
 from pandas.tseries.offsets import MonthBegin, MonthEnd
 import json
+from sklearn.base import BaseEstimator, TransformerMixin
+from keras.utils import Sequence
+
+######################################################################################################################
+# Public Parameters
+######################################################################################################################
+
+# Mask value for missing data
+MASK_VALUE = -1
 
 ######################################################################################################################
 # Private Parameters
@@ -380,6 +389,165 @@ def read_msg_log(log=_MSG_LOG_FILE_):
     except IOError:
         pass
     return messages
+
+
+# Generator which yields a batch of data each time it is called.
+# **** need to fix this to exclude samples with missing output *****
+def generator(data, lookback, delay, min_index, max_index,
+              shuffle=False, batch_size=128, step=6, verbose=0):
+    # Set the data max index limit
+    if max_index is None:
+        max_index = len(data) - delay - 1
+    else:
+        max_index = max_index - delay
+    # Set the current data start index limit
+    i = min_index + lookback
+    if verbose:
+        print('\nstarting generator ... batch start index i = %d\n' % i)
+
+    while 1:
+        if verbose:
+            print('\n batch start index i = %d' % i)
+        if shuffle:
+            # Randomly select a batch from data
+            rows = np.random.randint(
+                min_index + lookback, max_index, size=batch_size)
+        else:
+            # Select a batch starting from i; the last batch may have fewer samples than other batches
+            # Note that max_index had already been reduced to account for delay.
+            rows = np.arange(i, min(i + batch_size, max_index + 1))
+            # If last batch, reset the data index to beginning of data
+            if i + batch_size >= max_index:
+                i = min_index + lookback
+            else:
+                # Set the data index to the start of next batch of data
+                i += len(rows)
+
+        # Each row in samples is a training sample from t-lookback to t-1.
+        samples = np.zeros((len(rows),
+                            lookback // step,
+                            data.shape[-1]))
+        # Each value in targets is a training label at t+delay.
+        targets = np.zeros((len(rows),))
+
+        for j, row in enumerate(rows):
+            indices = range(rows[j] - lookback, rows[j], step)
+            samples[j] = data[indices]
+            targets[j] = data[rows[j] + delay][0]
+
+        yield samples, targets
+
+
+# Thread-safe generator which yields a batch of data each time it is called.
+class DataGenerator(Sequence):
+
+    def __init__(self, data, lookback, delay, min_index, max_index, batch_size=128, step=6, verbose=0):
+        if max_index is None:
+            self.max_index = len(data) - delay - 1
+        else:
+            self.max_index = max_index - delay
+        self.min_index = min_index
+        self.data = data
+        self.lookback, self.delay = lookback, delay
+        self.batch_size, self.step = batch_size, step
+        self.verbose = verbose
+        self.dict_batch_idx = {}
+
+        # Number of batches = (total samples - lookback - delay / batch_size). Add 1 if residual samples.
+        # But need to exclude the samples which have missing output i.e. output = MASK_VALUE
+        total_samples = (self.max_index - self.min_index + 1) - self.lookback - self.delay
+        samples_output_nan = (data[:, 0] == MASK_VALUE).sum()  # number of samples with missing output
+        self.num_batches = int(np.ceil((total_samples - samples_output_nan) / self.batch_size))
+
+        # Select a batch starting from lookback;
+        # the last batch may have fewer samples than other batches
+        # Note that max_index had already been reduced to account for delay.
+        # Need to exclude the samples which have missing output i.e. output = MASK_VALUE
+        batch_start_idx = self.min_index + self.lookback
+        batch_end_idx = batch_start_idx
+        for i in range(self.num_batches):
+            rows = []
+            for j in range(self.batch_size):
+                output_nan = True
+                remaining_samples = True
+                while (remaining_samples and output_nan):
+                    if data[batch_end_idx, 0] == -1:
+                        # current sample has no output, fetch next sample
+                        if batch_end_idx < self.max_index:
+                            batch_end_idx += 1
+                        else:
+                            # reaches end of dataset
+                            remaining_samples = False
+                    else:
+                        # found a sample with output
+                        output_nan = False
+                if not output_nan:
+                    # found a good sample, add to list
+                    rows.append(batch_end_idx)
+                    # continue search with next sample
+                    if batch_end_idx < self.max_index:
+                        batch_end_idx += 1
+                        # note that if reach end of dataset, will also be in last batch
+                else:
+                    # no more good samples found in the rest of dataset
+                    break
+            if rows:
+                self.dict_batch_idx[i] = rows
+                batch_start_idx = batch_end_idx
+
+    def __len__(self):
+        return self.num_batches
+
+    def __getitem__(self, item):
+        if self.verbose:
+            print('\nitem = %d' % item)
+        # Item values are 0 to (__len__ - 1)
+        # rows = np.arange(self.lookback + item * self.batch_size,
+        #                  min(self.lookback + (item + 1) * self.batch_size, self.max_index + 1))
+        rows = self.dict_batch_idx[item]
+
+        if self.verbose:
+            print('\nbatch start index = %d\nbatch end index = %d' % (min(rows), max(rows)))
+        # Each row in samples is a training sample from t-lookback to t-1.
+        samples = np.zeros((len(rows),
+                            self.lookback // self.step,
+                            self.data.shape[-1]))
+        # Each value in targets is a training label at t+delay.
+        targets = np.zeros((len(rows),))
+
+        for j, row in enumerate(rows):
+            indices = range(rows[j] - self.lookback, rows[j], self.step)
+            samples[j] = self.data[indices]
+            targets[j] = self.data[rows[j] + self.delay][0]
+        return samples, targets
+
+
+# This class selects the desired attributes and drops the rest, and converts the DataFrame to a Numpy array.
+class DataFrameSelector(BaseEstimator, TransformerMixin):
+
+    def __init__(self, attribute_names):
+        self.attribute_names = attribute_names
+
+    def fit(self, X, y=None):
+        return self
+
+    def transform(self, X):
+        return X[self.attribute_names].values
+
+
+# This class converts all NaN to a specified numerical value.
+class Nan_to_Num_Transformer(BaseEstimator, TransformerMixin):
+
+    def __init__(self, num = -1):
+        self.num = num
+
+    def fit(self, X, y=None):
+        return self
+
+    def transform(self, X):
+        nan_to_num = lambda x: self.num if np.isnan(x) else x
+        vectorized_nan_to_num = np.vectorize(nan_to_num)
+        return vectorized_nan_to_num(X)
 
 
 ######################################################################################################################
