@@ -28,7 +28,8 @@ MASK_VALUE = -1
 _RAW_DATA_PATH_ = os.path.join('source', '105 building data')
 _COMBINED_DATA_PATH_ = os.path.join('source', 'combined_bldg_data')
 _PROCESSED_DATA_PATH_ = os.path.join('source', 'processed_bldg_data')
-_IMPUTED_DATA_PATH_ = os.path.join('source', 'imputed_bldg_data')
+_IMPUTED_TRAIN_DATA_PATH_ = os.path.join('source', 'imputed_bldg_data', 'train')
+_IMPUTED_TEST_DATA_PATH_ = os.path.join('source', 'imputed_bldg_data', 'test')
 _MISC_DATA_PATH_ = os.path.join('source', 'other_data')
 
 # files
@@ -40,7 +41,9 @@ _BLDG_BTU_FORMULAE_FILE_ = os.path.join(_MISC_DATA_PATH_, 'bldg-BTU-formulae.jso
 _DATA_TYPE_TO_PATH_ = {
     'raw': _RAW_DATA_PATH_,
     'combined': _COMBINED_DATA_PATH_,
-    'processed': _PROCESSED_DATA_PATH_
+    'processed': _PROCESSED_DATA_PATH_,
+    'imputed_train': _IMPUTED_TRAIN_DATA_PATH_,
+    'imputed_test': _IMPUTED_TEST_DATA_PATH_
 }
 
 _MONTH_TO_NUM_ = {
@@ -103,10 +106,11 @@ def load_data_by_bldg(bldg_name_list, data_type, data_path=None):
             bldg_df_list = _load_data_by_bldg_(bldg_name_list[0])
         else:
             bldg_df_list = _load_data_by_bldg_(bldg_name_list[0], data_path=data_path)
-    # data_type is 'combined' or 'processed'
+    # data_type is 'combined' or 'processed' or 'imputed_train' or 'imputed_test'
     else:
         # load all files
         if bldg_name_list == 'all':
+            # Get all the building filenames referencing the folder 'combined_bldg_data'
             files = os.listdir('combined_bldg_data')
             if data_path is None:
                 files = [os.path.join(_DATA_TYPE_TO_PATH_[data_type], i) for i in files]
@@ -516,8 +520,9 @@ class DataGenerator(Sequence):
         targets = np.zeros((len(rows),))
 
         for j, row in enumerate(rows):
-            indices = range(rows[j] - self.lookback, rows[j], self.step)
+            indices = np.arange(rows[j] - self.lookback, rows[j], self.step)
             samples[j] = self.data[indices]
+            # samples[j] = self.data[(rows[j] - self.lookback):rows[j]]
             targets[j] = self.data[rows[j] + self.delay][0]
         return samples, targets
 
