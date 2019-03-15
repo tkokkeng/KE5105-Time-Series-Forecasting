@@ -10,6 +10,7 @@ import matplotlib.pyplot as plt
 import numpy as np
 from pandas.tseries.offsets import MonthBegin, MonthEnd
 import json
+import random
 from sklearn.base import BaseEstimator, TransformerMixin
 from keras.utils import Sequence
 from keras.callbacks import Callback
@@ -446,7 +447,7 @@ def generator(data, lookback, delay, min_index, max_index,
 # Thread-safe generator which yields a batch of data each time it is called.
 class DataGenerator(Sequence):
 
-    def __init__(self, data, lookback, delay, min_index, max_index, batch_size=128, step=6, verbose=0):
+    def __init__(self, data, lookback, delay, min_index, max_index, batch_size=128, step=6, shuffle=False, verbose=0):
         if max_index is None:
             self.max_index = len(data) - delay - 1
         else:
@@ -455,6 +456,7 @@ class DataGenerator(Sequence):
         self.data = data
         self.lookback, self.delay = lookback, delay
         self.batch_size, self.step = batch_size, step
+        self.shuffle = shuffle
         self.verbose = verbose
         self.dict_batch_idx = {}
 
@@ -477,8 +479,9 @@ class DataGenerator(Sequence):
                 remaining_samples = True
                 # Loop until a good sample is found or no more data
                 while (remaining_samples and output_nan):
-                    if data[batch_end_idx, 0] == -1:
-                        # current sample has no output, fetch next sample
+                    if ((data[batch_end_idx, 0] == MASK_VALUE) or
+                        np.all(data[batch_end_idx - self.lookback:batch_end_idx, 0] == MASK_VALUE)):
+                        # if current sample has no output or its lookback are all NaN, fetch next sample
                         if batch_end_idx < self.max_index:
                             batch_end_idx += 1
                         else:
@@ -533,6 +536,15 @@ class DataGenerator(Sequence):
             samples[j] = self.data[indices]
             # samples[j] = self.data[(rows[j] - self.lookback):rows[j]]
             targets[j] = self.data[rows[j] + self.delay][0]
+
+        # Shuffle samples, targets if needed.
+        if self.shuffle:
+            temp = list(zip(samples, targets))
+            random.shuffle(temp)
+            temp = np.array(temp)
+            samples = np.stack(temp[:, 0])
+            targets = temp[:, 1]
+
         return samples, targets
 
 
@@ -570,7 +582,10 @@ class DataGeneratorForStateFulRNN(Sequence):
             # for j in range(self.batch_size):
             while ((len(rows) < self.batch_size) and remaining_samples):
 
-                if data[batch_end_idx, 0] == MASK_VALUE:
+                if ((data[batch_end_idx, 0] == MASK_VALUE) or
+                        np.all(data[batch_end_idx - self.lookback:batch_end_idx, 0] == MASK_VALUE)):
+                # if current sample has no output or its lookback are all NaN, fetch next sample
+                # if data[batch_end_idx, 0] == MASK_VALUE:
                     # current sample has no output, clear batch
                     rows = []
                     seq_from_last_batch = False
@@ -631,7 +646,7 @@ class ResetStateCb(Callback):
             self.model.reset_states()
 
 
-#
+# This callback calculates the validation score and save the best model.
 class ValidationScoreCb(Callback):
 
     # def __init__(self, gen, callbacks):
@@ -641,7 +656,7 @@ class ValidationScoreCb(Callback):
     #     super(ValidationScoreCb, self).__init__()
 
     def __init__(self, data, lookback, delay, min_index, max_index, batch_size=128, step=6, verbose=0,
-                 save_model = False):
+                 save_model = False, monitor='val_loss'):
         if max_index is None:
             self.max_index = len(data) - delay - 1
         else:
@@ -654,6 +669,7 @@ class ValidationScoreCb(Callback):
         self.batch_list = []
         self.history = {}
         self.save_model = save_model
+        self.monitor = monitor
 
         self.batch_list, no_need = get_contiguous_batches(data, lookback, delay, min_index,
                                                           max_index, batch_size, step)
@@ -740,11 +756,14 @@ class ValidationScoreCb(Callback):
             self.history['val_' + metric].append(sum_weighted_metric / num_samples)
 
         # Save model
-        if (save_model > 0) and (not (epoch % 25)):
-            self.model.save_weights(
-                'weights-epoch{:4d}-val_loss{:.2f}'.format(epoch, self.history['val_loss'][-1]) + '.h5')
+        if min(self.history[self.monitor]) == self.history[self.monitor][-1]:
+            self.model.save_weights('weights-best.h5')
+        # if (self.save_model > 0) and (not (epoch % 25)):
+        #     self.model.save_weights(
+        #         'weights-epoch{:4d}-val_loss{:.2f}'.format(epoch, self.history['val_loss'][-1]) + '.h5')
 
-#
+# This function returns separates the data into sequences of contiguous samples in multiples of mini-batch size.
+# Each sequence can then be given as input to evaluate() or predict() of a stateful model.
 def get_contiguous_batches(data, lookback, delay, min_index, max_index, batch_size=128, step=6):
 
     batch_list = []
@@ -771,11 +790,18 @@ def get_contiguous_batches(data, lookback, delay, min_index, max_index, batch_si
                     # no more data
                     remaining_samples = False
 
+        # Remove 1st sample if the lookback is all -1
+        # if batch end index is same as batch start index, there is only at most 1 sample, it will be reject regardless.
+        if batch_end_idx > batch_start_idx:
+            if np.all(data[batch_start_idx - lookback:batch_start_idx, 0] == MASK_VALUE):
+                batch_start_idx+=1
+
         # Add samples found into the batch if greater than batch size.
         if batch_end_idx > batch_start_idx + batch_size:
 
             resid = (batch_end_idx - batch_start_idx) % batch_size
             rows = np.arange(batch_start_idx, batch_end_idx - resid).tolist()
+
             samples = np.zeros((len(rows),
                                 lookback // step,
                                 data.shape[-1]))
@@ -795,8 +821,13 @@ def get_contiguous_batches(data, lookback, delay, min_index, max_index, batch_si
         # look for the next good value
         if remaining_samples:
             # Skip all the nan
-            while data[batch_end_idx, 0] == MASK_VALUE:
+            while (data[batch_end_idx, 0] == MASK_VALUE) and (batch_end_idx < max_index):
                 batch_end_idx += 1
+
+            # Check if at end of data
+            if batch_end_idx == max_index:
+                remaining_samples = False
+
             # Restart from this good value
             batch_start_idx = batch_end_idx
 
@@ -817,6 +848,7 @@ class DataFrameSelector(BaseEstimator, TransformerMixin):
 
     def inverse_transform(self, X):
         return X
+
 
 # This class converts all NaN to a specified numerical value.
 class Nan_to_Num_Transformer(BaseEstimator, TransformerMixin):
