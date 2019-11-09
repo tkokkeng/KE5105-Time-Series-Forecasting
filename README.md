@@ -1,6 +1,6 @@
 ## Welcome to my Time Series Forecasting Project
 
-The aim of the project is to create accurate forecasts of the time series for resource comsumption in office buildings at the National University of Singapore.
+The aim of the project is to create accurate forecasts of electrial resource consumption in office buildings at the National University of Singapore.
 
 For this purpose, I will be exploring the use of **recurrent neural networks**.
 
